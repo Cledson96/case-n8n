@@ -41,11 +41,7 @@
     },
     {
       "parameters": {
-        "model": {
-          "__rl": true,
-          "mode": "list",
-          "value": "={{ $json.model || 'openai/gpt-4o-mini' }}"
-        },
+        "model": "openai/gpt-4o-mini",
         "options": {
           "temperature": 0.15,
           "maxRetries": 2,
