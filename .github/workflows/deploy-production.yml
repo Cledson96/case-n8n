@@ -1,0 +1,74 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy n8n stack to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required files
+        run: |
+          test -f docker-compose.yml
+          test -f .env.example
+          test -f infra/nginx/n8n.preambulo.cledson.com.br.conf
+          test -f infra/sql/init/001_create_agent_runs.sql
+
+      - name: Deploy on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          N8N_HOST_PORT: ${{ secrets.N8N_HOST_PORT }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          N8N_BASIC_AUTH_USER: ${{ secrets.N8N_BASIC_AUTH_USER }}
+          N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
+          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: N8N_HOST_PORT,POSTGRES_PASSWORD,OPENROUTER_API_KEY,N8N_BASIC_AUTH_USER,N8N_BASIC_AUTH_PASSWORD,N8N_ENCRYPTION_KEY
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.PRODUCTION_VPS_APP_DIR }}"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+            if [ -z "${N8N_HOST_PORT:-}" ]; then N8N_HOST_PORT=5678; fi
+            cat > .env.production <<ENV
+            COMPOSE_PROJECT_NAME=case-n8n
+            N8N_HOST_PORT=${N8N_HOST_PORT}
+            POSTGRES_PORT=5432
+            POSTGRES_DB=n8n
+            POSTGRES_USER=n8n
+            POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+            N8N_HOST=n8n.preambulo.cledson.com.br
+            N8N_PROTOCOL=https
+            N8N_PORT=5678
+            WEBHOOK_URL=https://n8n.preambulo.cledson.com.br/
+            N8N_EDITOR_BASE_URL=https://n8n.preambulo.cledson.com.br/
+            N8N_BASIC_AUTH_ACTIVE=true
+            N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+            N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+            N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+            GENERIC_TIMEZONE=America/Sao_Paulo
+            TZ=America/Sao_Paulo
+            OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+            ENV
+            docker compose --env-file .env.production pull || true
+            docker compose --env-file .env.production up -d --remove-orphans
+            curl -I --fail http://127.0.0.1:${N8N_HOST_PORT}

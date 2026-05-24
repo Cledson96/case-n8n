@@ -1,0 +1,5 @@
+.env
+.env.production
+_docx_extract/
+.n8n/
+postgres-data/

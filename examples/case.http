@@ -1,0 +1,58 @@
+@baseUrl = https://n8n.preambulo.cledson.com.br
+@basicAuth = {{N8N_BASIC_AUTH_USER}} {{N8N_BASIC_AUTH_PASSWORD}}
+
+### Health
+GET {{baseUrl}}/health
+Authorization: Basic {{basicAuth}}
+
+### Review
+POST {{baseUrl}}/api/v1/review
+Content-Type: application/json
+Authorization: Basic {{basicAuth}}
+
+{
+  "code": "export async function calcularOferta(devedorId: string, prazo: number) { return prazo; }",
+  "language": "typescript",
+  "context": "Modulo de negociacao"
+}
+
+### Compliance
+POST {{baseUrl}}/api/v1/compliance
+Content-Type: application/json
+Authorization: Basic {{basicAuth}}
+
+{
+  "task_description": "Historia: Registrar tentativa de contato com devedor",
+  "code": "app.post('/contatos', async (req, res) => { return res.status(201).json({ ok: true }); });",
+  "language": "javascript"
+}
+
+### Document
+POST {{baseUrl}}/api/v1/document
+Content-Type: application/json
+Authorization: Basic {{basicAuth}}
+
+{
+  "code": "def classify_aging(due_date, reference_date=None): return 'current'",
+  "language": "python",
+  "doc_type": "technical"
+}
+
+### Tests
+POST {{baseUrl}}/api/v1/tests
+Content-Type: application/json
+Authorization: Basic {{basicAuth}}
+
+{
+  "code": "export function calcularJurosSimples(principal, taxaMensal, meses) { return principal * (1 + taxaMensal * meses); }",
+  "language": "typescript",
+  "test_framework": "jest"
+}
+
+### History list
+GET {{baseUrl}}/api/v1/history
+Authorization: Basic {{basicAuth}}
+
+### History detail
+GET {{baseUrl}}/api/v1/history/00000000-0000-0000-0000-000000000000
+Authorization: Basic {{basicAuth}}
