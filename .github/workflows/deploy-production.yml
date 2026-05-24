@@ -67,7 +67,6 @@ jobs:
             cat > .env.production <<ENV
             COMPOSE_PROJECT_NAME=case-n8n
             N8N_HOST_PORT=${N8N_HOST_PORT}
-            POSTGRES_PORT=5432
             POSTGRES_DB=n8n
             POSTGRES_USER=n8n
             POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
