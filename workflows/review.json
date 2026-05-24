@@ -1,0 +1,107 @@
+{
+  "name": "Code Review",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/v1/review",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "2a2bd1df-91c4-4c55-b5d8-c7e2d0011001",
+      "name": "POST /api/v1/review",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ],
+      "webhookId": "code-review"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://n8n.preambulo.cledson.com.br"
+            },
+            {
+              "name": "X-OpenRouter-Title",
+              "value": "case-n8n"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: $json.body.model || 'openai/gpt-4o-mini', temperature: 0.2, messages: [ { role: 'system', content: 'Você é um revisor de código sênior. Analise qualidade, bugs, segurança, manutenibilidade e testes. Responda em português do Brasil, de forma objetiva, com seções: resumo, pontos positivos, problemas encontrados, severidade, recomendações e próximos passos.' }, { role: 'user', content: 'Analise o código abaixo.\n\nLinguagem: ' + ($json.body.language || 'não informada') + '\nContexto: ' + ($json.body.context || 'não informado') + '\n\nCódigo:\n```\n' + ($json.body.code || '') + '\n```' } ] } }}",
+        "options": {}
+      },
+      "id": "57261c31-32c6-4424-b9ad-7be2d0011002",
+      "name": "OpenRouter Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json;\nconst message = response.choices?.[0]?.message?.content ?? '';\n\nreturn [\n  {\n    json: {\n      data: {\n        flow_type: 'review',\n        status: 'completed',\n        model_used: response.model ?? 'openai/gpt-4o-mini',\n        review: message,\n        provider_response_id: response.id ?? null\n      },\n      meta: {\n        timestamp: new Date().toISOString()\n      }\n    }\n  }\n];"
+      },
+      "id": "df01de66-a7bb-4d75-a858-c8e2d0011003",
+      "name": "Format Review Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "POST /api/v1/review": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Review": {
+      "main": [
+        [
+          {
+            "node": "Format Review Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-05-24T00:00:00.000Z",
+  "versionId": "f7072cf1-a81d-4c9e-a29a-c8e2d0011004"
+}
