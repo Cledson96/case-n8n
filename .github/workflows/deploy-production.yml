@@ -64,6 +64,16 @@ jobs:
 
             cd "$APP_DIR"
             if [ -z "${N8N_HOST_PORT:-}" ]; then N8N_HOST_PORT=5678; fi
+
+            if [ "$(id -u)" -eq 0 ]; then
+              SUDO=""
+            else
+              SUDO="sudo"
+            fi
+
+            mkdir -p .n8n
+            $SUDO chown -R 1000:1000 .n8n
+
             cat > .env.production <<ENV
             COMPOSE_PROJECT_NAME=case-n8n
             N8N_HOST_PORT=${N8N_HOST_PORT}
@@ -102,12 +112,6 @@ jobs:
               echo "Waiting for n8n to become ready... attempt ${attempt}/60"
               sleep 2
             done
-
-            if [ "$(id -u)" -eq 0 ]; then
-              SUDO=""
-            else
-              SUDO="sudo"
-            fi
 
             if ! command -v nginx >/dev/null 2>&1 || ! command -v certbot >/dev/null 2>&1 || ! dpkg -s python3-certbot-nginx >/dev/null 2>&1; then
               $SUDO apt-get update
