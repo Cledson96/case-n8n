@@ -1,0 +1,73 @@
+{
+  "name": "Health Check",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "health",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "5f4f2c2a-8f8f-4e72-8f6f-0f69c5a5c001",
+      "name": "GET /health",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        320,
+        300
+      ],
+      "webhookId": "health-check"
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "ok"
+            },
+            {
+              "name": "service",
+              "value": "case-n8n"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{$now.toISO()}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ab2f3d58-83d9-42cc-9a46-7f0f0a5c5002",
+      "name": "Health Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "GET /health": {
+      "main": [
+        [
+          {
+            "node": "Health Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-05-24T00:00:00.000Z",
+  "versionId": "c3b4f0df-489d-4efc-a8cb-4e46ff7c5003"
+}
