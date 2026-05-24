@@ -37,15 +37,17 @@ jobs:
           N8N_BASIC_AUTH_USER: ${{ secrets.N8N_BASIC_AUTH_USER }}
           N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
           N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
+          LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: N8N_HOST_PORT,POSTGRES_PASSWORD,OPENROUTER_API_KEY,N8N_BASIC_AUTH_USER,N8N_BASIC_AUTH_PASSWORD,N8N_ENCRYPTION_KEY
+          envs: N8N_HOST_PORT,POSTGRES_PASSWORD,OPENROUTER_API_KEY,N8N_BASIC_AUTH_USER,N8N_BASIC_AUTH_PASSWORD,N8N_ENCRYPTION_KEY,LETSENCRYPT_EMAIL
           script: |
             set -euo pipefail
             APP_DIR="${{ secrets.PRODUCTION_VPS_APP_DIR }}"
             REPO_URL="https://github.com/${{ github.repository }}.git"
+            DOMAIN="n8n.preambulo.cledson.com.br"
 
             if [ ! -d "$APP_DIR" ]; then
               mkdir -p "$(dirname "$APP_DIR")"
@@ -85,3 +87,73 @@ jobs:
             docker compose --env-file .env.production pull || true
             docker compose --env-file .env.production up -d --remove-orphans
             curl -I --fail http://127.0.0.1:${N8N_HOST_PORT}
+
+            if [ "$(id -u)" -eq 0 ]; then
+              SUDO=""
+            else
+              SUDO="sudo"
+            fi
+
+            if ! command -v nginx >/dev/null 2>&1 || ! command -v certbot >/dev/null 2>&1 || ! dpkg -s python3-certbot-nginx >/dev/null 2>&1; then
+              $SUDO apt-get update
+              $SUDO apt-get install -y nginx certbot python3-certbot-nginx
+            fi
+
+            $SUDO mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/conf.d
+
+            if [ ! -f /etc/nginx/conf.d/connection_upgrade.conf ]; then
+              $SUDO tee /etc/nginx/conf.d/connection_upgrade.conf >/dev/null <<'NGINX_MAP'
+            map $http_upgrade $connection_upgrade {
+                default upgrade;
+                '' close;
+            }
+            NGINX_MAP
+            fi
+
+            NGINX_SITE="/etc/nginx/sites-available/case-n8n"
+
+            if [ ! -f "$NGINX_SITE" ]; then
+              $SUDO tee "$NGINX_SITE" >/dev/null <<NGINX_SITE
+            server {
+                listen 80;
+                server_name ${DOMAIN};
+
+                location / {
+                    proxy_pass http://127.0.0.1:${N8N_HOST_PORT};
+                    proxy_http_version 1.1;
+                    proxy_set_header Upgrade \$http_upgrade;
+                    proxy_set_header Connection \$connection_upgrade;
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto \$scheme;
+                    proxy_set_header X-Forwarded-Host \$host;
+                }
+            }
+            NGINX_SITE
+            fi
+
+            $SUDO ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/case-n8n
+            $SUDO nginx -t
+            $SUDO systemctl reload nginx
+
+            if [ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
+              if [ -z "${LETSENCRYPT_EMAIL:-}" ]; then
+                echo "LETSENCRYPT_EMAIL secret is required to issue the SSL certificate."
+                exit 1
+              fi
+
+              $SUDO certbot --nginx \
+                --non-interactive \
+                --agree-tos \
+                --email "$LETSENCRYPT_EMAIL" \
+                --domains "$DOMAIN" \
+                --redirect \
+                --cert-name "$DOMAIN"
+            else
+              $SUDO certbot certificates --cert-name "$DOMAIN"
+            fi
+
+            $SUDO nginx -t
+            $SUDO systemctl reload nginx
+            curl -I --fail "https://${DOMAIN}"
