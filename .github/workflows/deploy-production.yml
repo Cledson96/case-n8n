@@ -85,7 +85,23 @@ jobs:
             ENV
             docker compose --env-file .env.production pull || true
             docker compose --env-file .env.production up -d --remove-orphans
-            curl -I --fail http://127.0.0.1:${N8N_HOST_PORT}
+
+            for attempt in $(seq 1 60); do
+              if curl -sS -o /dev/null "http://127.0.0.1:${N8N_HOST_PORT}"; then
+                echo "n8n is responding on port ${N8N_HOST_PORT}"
+                break
+              fi
+
+              if [ "$attempt" -eq 60 ]; then
+                echo "n8n did not become ready in time"
+                docker compose --env-file .env.production ps
+                docker compose --env-file .env.production logs --tail=100 n8n
+                exit 1
+              fi
+
+              echo "Waiting for n8n to become ready... attempt ${attempt}/60"
+              sleep 2
+            done
 
             if [ "$(id -u)" -eq 0 ]; then
               SUDO=""
@@ -155,4 +171,18 @@ jobs:
 
             $SUDO nginx -t
             $SUDO systemctl reload nginx
-            curl -I --fail "https://${DOMAIN}"
+
+            for attempt in $(seq 1 30); do
+              if curl -sS -I --fail "https://${DOMAIN}"; then
+                echo "HTTPS endpoint is responding for ${DOMAIN}"
+                break
+              fi
+
+              if [ "$attempt" -eq 30 ]; then
+                echo "HTTPS endpoint did not become ready in time"
+                exit 1
+              fi
+
+              echo "Waiting for HTTPS endpoint... attempt ${attempt}/30"
+              sleep 2
+            done
