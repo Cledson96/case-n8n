@@ -1,5 +1,5 @@
 @baseUrl = https://n8n.preambulo.cledson.com.br
-@basicAuth = {{N8N_BASIC_AUTH_USER}} {{N8N_BASIC_AUTH_PASSWORD}}
+@basicAuth = Basic REPLACE_WITH_BASE64_USER_COLON_PASSWORD
 
 ### Health
 GET {{baseUrl}}/health
