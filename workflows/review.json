@@ -1,5 +1,5 @@
 {
-  "name": "Professional Code Review Agents",
+  "name": "Professional Code Review AI Agents",
   "nodes": [
     {
       "parameters": {
@@ -11,53 +11,67 @@
       "id": "2a2bd1df-91c4-4c55-b5d8-c7e2d0011001",
       "name": "POST /api/v1/review",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
-      "position": [180, 320],
-      "webhookId": "code-review-professional"
+      "typeVersion": 2.1,
+      "position": [160, 300],
+      "webhookId": "code-review-ai-agent"
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body ?? {};\nconst code = String(body.code ?? '').trim();\nconst providedLanguage = String(body.language ?? '').trim().toLowerCase();\nconst context = String(body.context ?? 'Não informado').trim();\nconst model = String(body.model ?? 'openai/gpt-4o-mini').trim();\nconst startedAt = Date.now();\nfunction inferLanguage(input, source) {\n  if (input) return input;\n  if (/def\\s+\\w+\\(|import\\s+.+from\\s+|self\\.|pytest/.test(source)) return 'python';\n  if (/<\\?php|function\\s+\\w+\\(|->|namespace\\s+/.test(source)) return 'php';\n  if (/interface\\s+\\w+|type\\s+\\w+\\s*=|:\\s*(string|number|boolean)|implements\\s+/.test(source)) return 'typescript';\n  if (/function\\s+\\w+\\(|const\\s+|let\\s+|=>|module\\.exports/.test(source)) return 'javascript';\n  return 'generic';\n}\nconst language = inferLanguage(providedLanguage, code);\nconst agents = {\n  typescript: { name: 'typescript-review-agent', focus: 'TypeScript avançado, tipagem, async/await, arquitetura modular, segurança, testes Jest/Vitest e qualidade de API.' },\n  javascript: { name: 'javascript-review-agent', focus: 'JavaScript moderno, Node.js/browser, closures, promises, validação, segurança, performance e testes.' },\n  python: { name: 'python-review-agent', focus: 'Python, typing, PEP8, erros comuns, segurança, performance, pytest e organização de módulos.' },\n  php: { name: 'php-review-agent', focus: 'PHP moderno, PSR, Composer, segurança web, validação, performance e testes PHPUnit.' },\n  generic: { name: 'generic-review-agent', focus: 'Revisão geral de código, bugs, segurança, qualidade, performance, testes e manutenibilidade.' }\n};\nconst agent = agents[language] ?? agents.generic;\nconst validationErrors = [];\nif (!code) validationErrors.push({ field: 'code', message: 'O campo code é obrigatório.' });\nif (code.length > 60000) validationErrors.push({ field: 'code', message: 'O código enviado é grande demais para este endpoint.' });\nconst runId = `run_${Date.now()}_${Math.random().toString(16).slice(2)}`;\nconst schema = { score: 0, severity: 'low|medium|high|critical', summary: 'string', assessment: 'approve|needs_work|requires_changes', positive_observations: ['string'], findings: [{ severity: 'critical|warning|suggestion', category: 'functionality|security|quality|testing|performance|maintainability', message: 'string', recommendation: 'string' }], recommendations: ['string'], test_suggestions: ['string'], security_notes: ['string'], complexity_assessment: 'string' };\nconst systemPrompt = `Você é o ${agent.name}. Foco: ${agent.focus} Responda APENAS JSON válido, sem markdown fora do JSON, no schema: ${JSON.stringify(schema)}. Seja criterioso e profissional. Use severidades: critical para falhas graves, warning para problemas relevantes, suggestion para melhorias. Atribua score de 0 a 100.`;\nconst userPrompt = `Contexto do projeto/case: ${context}\\nLinguagem detectada: ${language}\\n\\nCódigo para revisão:\\n\\`\\`\\`\\n${code}\\n\\`\\`\\``;\nreturn [{ json: { run_id: runId, started_at_ms: startedAt, input: body, code, language, context, model, specialist_agent: agent.name, validation_errors: validationErrors, system_prompt: systemPrompt, user_prompt: userPrompt, langsmith: { tracing: $env.LANGSMITH_TRACING === 'true', project: $env.LANGSMITH_PROJECT || 'case-n8n', endpoint: $env.LANGSMITH_ENDPOINT || 'https://api.smith.langchain.com' } } }];"
+        "jsCode": "const body = $json.body ?? {};\nconst code = String(body.code ?? '').trim();\nconst providedLanguage = String(body.language ?? '').trim().toLowerCase();\nconst context = String(body.context ?? 'Não informado').trim();\nconst model = String(body.model ?? 'openai/gpt-4o-mini').trim();\nconst startedAt = Date.now();\nfunction inferLanguage(input, source) {\n  if (input) return input;\n  if (/def\\s+\\w+\\(|import\\s+.+from\\s+|self\\.|pytest/.test(source)) return 'python';\n  if (/<\\?php|function\\s+\\w+\\(|->|namespace\\s+/.test(source)) return 'php';\n  if (/interface\\s+\\w+|type\\s+\\w+\\s*=|:\\s*(string|number|boolean)|implements\\s+/.test(source)) return 'typescript';\n  if (/function\\s+\\w+\\(|const\\s+|let\\s+|=>|module\\.exports/.test(source)) return 'javascript';\n  return 'generic';\n}\nconst language = inferLanguage(providedLanguage, code);\nconst agents = {\n  typescript: { name: 'typescript-review-agent', focus: 'TypeScript avançado, tipagem forte, async/await, arquitetura modular, segurança, testes Jest/Vitest e qualidade de API.' },\n  javascript: { name: 'javascript-review-agent', focus: 'JavaScript moderno, Node.js/browser, promises, closures, validação, segurança, performance e testes.' },\n  python: { name: 'python-review-agent', focus: 'Python, typing, PEP8, erros comuns, segurança, performance, pytest e organização de módulos.' },\n  php: { name: 'php-review-agent', focus: 'PHP moderno, PSR, Composer, segurança web, validação, performance e testes PHPUnit.' },\n  generic: { name: 'generic-review-agent', focus: 'Revisão geral de código, bugs, segurança, qualidade, performance, testes e manutenibilidade.' }\n};\nconst agent = agents[language] ?? agents.generic;\nconst validationErrors = [];\nif (!code) validationErrors.push({ field: 'code', message: 'O campo code é obrigatório.' });\nif (code.length > 60000) validationErrors.push({ field: 'code', message: 'O código enviado é grande demais para este endpoint.' });\nconst runId = `run_${Date.now()}_${Math.random().toString(16).slice(2)}`;\nconst schema = { score: 0, severity: 'low|medium|high|critical', summary: 'string', assessment: 'approve|needs_work|requires_changes', positive_observations: ['string'], findings: [{ severity: 'critical|warning|suggestion', category: 'functionality|security|quality|testing|performance|maintainability', message: 'string', recommendation: 'string' }], recommendations: ['string'], test_suggestions: ['string'], security_notes: ['string'], complexity_assessment: 'string' };\nconst systemPrompt = `Você é o ${agent.name}. Foco: ${agent.focus} Você deve atuar como AI Agent especialista de code review. Responda APENAS JSON válido, sem markdown fora do JSON, no schema: ${JSON.stringify(schema)}. Seja criterioso, profissional e objetivo em pt-BR. Use severidades: critical para falhas graves, warning para problemas relevantes, suggestion para melhorias. Atribua score de 0 a 100.`;\nconst userPrompt = validationErrors.length > 0 ? `Entrada inválida. Retorne JSON com assessment requires_changes e findings de validação: ${JSON.stringify(validationErrors)}` : `Contexto do projeto/case: ${context}\\nLinguagem detectada: ${language}\\n\\nCódigo para revisão:\\n\\`\\`\\`\\n${code}\\n\\`\\`\\``;\nreturn [{ json: { run_id: runId, started_at_ms: startedAt, code, language, context, model, specialist_agent: agent.name, system_prompt: systemPrompt, user_prompt: userPrompt, validation_errors: validationErrors } }];"
       },
       "id": "7a2f6b02-01ef-4b31-aad4-c7e2d0011002",
       "name": "Validate Input + Route Specialist",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 320]
+      "position": [430, 300]
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "={{ 'Bearer ' + $env.OPENROUTER_API_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "HTTP-Referer", "value": "https://n8n.preambulo.cledson.com.br" },
-            { "name": "X-OpenRouter-Title", "value": "case-n8n professional review agents" }
-          ]
+        "promptType": "define",
+        "text": "={{ $json.user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.system_prompt }}"
+        }
+      },
+      "id": "a63aa7d7-dc64-4bd7-b6e3-c8e2d0011003",
+      "name": "Specialist Review AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [740, 300]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "={{ $json.model || 'openai/gpt-4o-mini' }}"
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ { model: $json.model, temperature: 0.15, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: $json.system_prompt }, { role: 'user', content: $json.user_prompt } ] } }}",
-        "options": { "timeout": 120000 }
+        "options": {
+          "temperature": 0.15,
+          "maxRetries": 2,
+          "timeout": 120000
+        }
       },
-      "id": "57261c31-32c6-4424-b9ad-7be2d0011003",
-      "name": "Specialist Agent via OpenRouter",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [760, 320]
+      "id": "2df04fc4-bd1a-4748-8be8-c8e2d0011004",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [740, 560],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const request = $('Validate Input + Route Specialist').item.json;\nconst provider = $json;\nconst content = provider.choices?.[0]?.message?.content ?? '{}';\nlet structured;\ntry {\n  structured = JSON.parse(content);\n} catch (error) {\n  structured = { score: 0, severity: 'high', assessment: 'requires_changes', summary: 'A IA retornou conteúdo fora do JSON estruturado esperado.', positive_observations: [], findings: [{ severity: 'warning', category: 'quality', message: content, recommendation: 'Reexecutar a análise ou ajustar o prompt/schema.' }], recommendations: ['Validar o formato de saída do agente.'], test_suggestions: [], security_notes: [], complexity_assessment: 'indisponível' };\n}\nconst usage = provider.usage ?? {};\nconst durationMs = Math.max(0, Date.now() - request.started_at_ms);\nconst promptTokens = usage.prompt_tokens ?? 0;\nconst completionTokens = usage.completion_tokens ?? 0;\nconst totalTokens = usage.total_tokens ?? (promptTokens + completionTokens);\nlet estimatedCostUsd = null;\nif ((provider.model ?? request.model).includes('gpt-4o-mini')) {\n  estimatedCostUsd = Number((((promptTokens / 1000000) * 0.15) + ((completionTokens / 1000000) * 0.60)).toFixed(8));\n}\nconst response = { data: { flow_type: 'review', status: 'completed', language: request.language, specialist: request.specialist_agent, model_used: provider.model ?? request.model, score: structured.score ?? null, severity: structured.severity ?? 'unknown', assessment: structured.assessment ?? 'needs_work', summary: structured.summary ?? '', positive_observations: structured.positive_observations ?? [], findings: structured.findings ?? [], recommendations: structured.recommendations ?? [], test_suggestions: structured.test_suggestions ?? [], security_notes: structured.security_notes ?? [], complexity_assessment: structured.complexity_assessment ?? null }, metrics: { duration_ms: durationMs, prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens, estimated_cost_usd: estimatedCostUsd, provider_response_id: provider.id ?? null, finish_reason: provider.choices?.[0]?.finish_reason ?? null }, observability: { langsmith_tracing_enabled: request.langsmith.tracing, langsmith_project: request.langsmith.project, langsmith_endpoint: request.langsmith.endpoint }, meta: { run_id: request.run_id, timestamp: new Date().toISOString() } };\nfunction sql(value) { return String(value).replace(/'/g, '\\x27\\x27'); }\nconst inputPayload = JSON.stringify({ language: request.language, context: request.context, code: request.code });\nconst outputPayload = JSON.stringify(response);\nconst dbQuery = `INSERT INTO agent_runs (id, flow_type, status, input_payload, output_payload, duration_ms, model_used) VALUES (gen_random_uuid(), 'review', 'completed', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs}, '${sql(response.data.model_used)}');`;\nreturn [{ json: { response, db_query: dbQuery } }];"
+        "jsCode": "const request = $('Validate Input + Route Specialist').item.json;\nconst agentOutput = $json.output ?? $json.text ?? $json.response ?? JSON.stringify($json);\nlet structured;\ntry {\n  structured = typeof agentOutput === 'string' ? JSON.parse(agentOutput) : agentOutput;\n} catch (error) {\n  structured = { score: 0, severity: 'high', assessment: 'requires_changes', summary: 'O AI Agent retornou conteúdo fora do JSON estruturado esperado.', positive_observations: [], findings: [{ severity: 'warning', category: 'quality', message: String(agentOutput), recommendation: 'Ajustar o prompt/schema ou reexecutar a análise.' }], recommendations: ['Validar o formato de saída do agente.'], test_suggestions: [], security_notes: [], complexity_assessment: 'indisponível' };\n}\nconst durationMs = Math.max(0, Date.now() - request.started_at_ms);\nconst promptTokensEstimate = Math.ceil((request.system_prompt.length + request.user_prompt.length) / 4);\nconst completionTokensEstimate = Math.ceil(String(agentOutput).length / 4);\nconst totalTokensEstimate = promptTokensEstimate + completionTokensEstimate;\nconst estimatedCostUsd = Number((((promptTokensEstimate / 1000000) * 0.15) + ((completionTokensEstimate / 1000000) * 0.60)).toFixed(8));\nconst response = { data: { flow_type: 'review', status: 'completed', language: request.language, specialist: request.specialist_agent, model_used: request.model, score: structured.score ?? null, severity: structured.severity ?? 'unknown', assessment: structured.assessment ?? 'needs_work', summary: structured.summary ?? '', positive_observations: structured.positive_observations ?? [], findings: structured.findings ?? [], recommendations: structured.recommendations ?? [], test_suggestions: structured.test_suggestions ?? [], security_notes: structured.security_notes ?? [], complexity_assessment: structured.complexity_assessment ?? null }, metrics: { duration_ms: durationMs, prompt_tokens_estimate: promptTokensEstimate, completion_tokens_estimate: completionTokensEstimate, total_tokens_estimate: totalTokensEstimate, estimated_cost_usd: estimatedCostUsd }, observability: { langsmith_required: true, langsmith_project: 'case-n8n', tracing_env: 'LANGCHAIN_TRACING_V2=true' }, meta: { run_id: request.run_id, timestamp: new Date().toISOString() } };\nfunction sql(value) { return String(value).replaceAll(String.fromCharCode(39), String.fromCharCode(39) + String.fromCharCode(39)); }\nconst inputPayload = JSON.stringify({ language: request.language, context: request.context, code: request.code });\nconst outputPayload = JSON.stringify(response);\nconst dbQuery = `INSERT INTO agent_runs (id, flow_type, status, input_payload, output_payload, duration_ms, model_used) VALUES (gen_random_uuid(), 'review', 'completed', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs}, '${sql(response.data.model_used)}');`;\nreturn [{ json: { response, db_query: dbQuery } }];"
       },
-      "id": "df01de66-a7bb-4d75-a858-c8e2d0011004",
-      "name": "Normalize Output + Metrics",
+      "id": "df01de66-a7bb-4d75-a858-c8e2d0011005",
+      "name": "Normalize Agent Output + Metrics",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1060, 320]
+      "position": [1050, 300]
     },
     {
       "parameters": {
@@ -65,11 +79,11 @@
         "query": "={{ $json.db_query }}",
         "options": {}
       },
-      "id": "b34d83a6-c9ff-42ed-9b83-c8e2d0011005",
+      "id": "b34d83a6-c9ff-42ed-9b83-c8e2d0011006",
       "name": "Save Metrics to Postgres",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [1360, 320],
+      "typeVersion": 2.6,
+      "position": [1330, 300],
       "credentials": {
         "postgres": {
           "name": "case-n8n Postgres"
@@ -78,21 +92,34 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $('Normalize Output + Metrics').item.json.response;\nreturn [{ json: response }];"
+        "jsCode": "const response = $('Normalize Agent Output + Metrics').item.json.response;\nreturn [{ json: response }];"
       },
-      "id": "ca368584-3a67-4eca-9dc0-c8e2d0011006",
+      "id": "ca368584-3a67-4eca-9dc0-c8e2d0011007",
       "name": "Respond Structured Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1640, 320]
+      "position": [1600, 300]
     }
   ],
   "connections": {
-    "POST /api/v1/review": { "main": [[{ "node": "Validate Input + Route Specialist", "type": "main", "index": 0 }]] },
-    "Validate Input + Route Specialist": { "main": [[{ "node": "Specialist Agent via OpenRouter", "type": "main", "index": 0 }]] },
-    "Specialist Agent via OpenRouter": { "main": [[{ "node": "Normalize Output + Metrics", "type": "main", "index": 0 }]] },
-    "Normalize Output + Metrics": { "main": [[{ "node": "Save Metrics to Postgres", "type": "main", "index": 0 }]] },
-    "Save Metrics to Postgres": { "main": [[{ "node": "Respond Structured Review", "type": "main", "index": 0 }]] }
+    "POST /api/v1/review": {
+      "main": [[{ "node": "Validate Input + Route Specialist", "type": "main", "index": 0 }]]
+    },
+    "Validate Input + Route Specialist": {
+      "main": [[{ "node": "Specialist Review AI Agent", "type": "main", "index": 0 }]]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [[{ "node": "Specialist Review AI Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Specialist Review AI Agent": {
+      "main": [[{ "node": "Normalize Agent Output + Metrics", "type": "main", "index": 0 }]]
+    },
+    "Normalize Agent Output + Metrics": {
+      "main": [[{ "node": "Save Metrics to Postgres", "type": "main", "index": 0 }]]
+    },
+    "Save Metrics to Postgres": {
+      "main": [[{ "node": "Respond Structured Review", "type": "main", "index": 0 }]]
+    }
   },
   "settings": { "executionOrder": "v1" },
   "staticData": null,
@@ -100,5 +127,5 @@
   "tags": [],
   "triggerCount": 0,
   "updatedAt": "2026-05-24T00:00:00.000Z",
-  "versionId": "95c534cb-a4a2-432b-82ce-c8e2d0011007"
+  "versionId": "6cc84a28-348d-4b34-a7d7-c8e2d0011008"
 }
