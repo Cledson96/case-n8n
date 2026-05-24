@@ -38,11 +38,12 @@ jobs:
           N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
           N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
           LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: N8N_HOST_PORT,POSTGRES_PASSWORD,OPENROUTER_API_KEY,N8N_BASIC_AUTH_USER,N8N_BASIC_AUTH_PASSWORD,N8N_ENCRYPTION_KEY,LETSENCRYPT_EMAIL
+          envs: N8N_HOST_PORT,POSTGRES_PASSWORD,OPENROUTER_API_KEY,N8N_BASIC_AUTH_USER,N8N_BASIC_AUTH_PASSWORD,N8N_ENCRYPTION_KEY,LETSENCRYPT_EMAIL,LANGSMITH_API_KEY
           script: |
             set -euo pipefail
             APP_DIR="${{ secrets.PRODUCTION_VPS_APP_DIR }}"
@@ -92,6 +93,10 @@ jobs:
             GENERIC_TIMEZONE=America/Sao_Paulo
             TZ=America/Sao_Paulo
             OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+            LANGSMITH_TRACING=true
+            LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+            LANGSMITH_PROJECT=case-n8n
+            LANGSMITH_ENDPOINT=https://api.smith.langchain.com
             ENV
             docker compose --env-file .env.production pull || true
             docker compose --env-file .env.production up -d --remove-orphans
