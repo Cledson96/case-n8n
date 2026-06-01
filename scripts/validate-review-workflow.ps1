@@ -23,6 +23,7 @@ $requiredNodes = @(
   "POST /api/v1/review",
   "Prepare Review Request",
   "Ensure Review Database Schema",
+  "Restore Prepared Review Request",
   "Cache Lookup",
   "Use Cached Review?",
   "Create Pending Execution",
@@ -37,6 +38,7 @@ $requiredNodes = @(
   "Merge Specialist Outputs",
   "Review Aggregator Agent",
   "Persist Review Success",
+  "Restore Review Telemetry Query",
   "Record Review Telemetry",
   "Respond Structured Review",
   "Respond Cached Review"
@@ -77,9 +79,23 @@ foreach ($postgresNode in $postgresNodes) {
   }
 }
 
+$codeNodes = @(
+  "Prepare Review Request",
+  "Restore Prepared Review Request",
+  "Restore Review Telemetry Query"
+)
+
+foreach ($codeNode in $codeNodes) {
+  if ($nodeTypesByName[$codeNode] -ne "n8n-nodes-base.code") {
+    throw "Node '$codeNode' must be a Code node."
+  }
+}
+
 $connectionsJson = $workflow.connections | ConvertTo-Json -Depth 100
 $requiredConnectionMarkers = @(
   "Ensure Review Database Schema",
+  "Restore Prepared Review Request",
+  "Restore Review Telemetry Query",
   "Language Router + Deterministic Tools",
   "Naming Clarity Agent",
   "Error Handling Agent",
@@ -108,6 +124,42 @@ if ($missingCacheMarkers.Count -gt 0) {
 
 if ($workflowJson -match [regex]::Escape("digest(")) {
   throw "Cache lookup must not depend on Postgres pgcrypto digest()."
+}
+
+$restorePreparedNode = $workflow.nodes | Where-Object { $_.name -eq "Restore Prepared Review Request" } | Select-Object -First 1
+if (-not $restorePreparedNode) {
+  throw "Missing Restore Prepared Review Request node."
+}
+
+$restorePreparedCode = $restorePreparedNode.parameters.jsCode
+$requiredRestoreMarkers = @(
+  '$(''Prepare Review Request'').first().json',
+  "cache_lookup_query"
+)
+
+$missingRestoreMarkers = @($requiredRestoreMarkers | Where-Object { $restorePreparedCode -notmatch [regex]::Escape($_) })
+if ($missingRestoreMarkers.Count -gt 0) {
+  throw "Restore Prepared Review Request is missing markers: $($missingRestoreMarkers -join ', ')"
+}
+
+$restoreTelemetryNode = $workflow.nodes | Where-Object { $_.name -eq "Restore Review Telemetry Query" } | Select-Object -First 1
+if (-not $restoreTelemetryNode) {
+  throw "Missing Restore Review Telemetry Query node."
+}
+
+$restoreTelemetryCode = $restoreTelemetryNode.parameters.jsCode
+$requiredTelemetryRestoreMarkers = @(
+  '$(''Normalize Aggregated Review'').first().json',
+  "telemetry_query"
+)
+
+$missingTelemetryRestoreMarkers = @($requiredTelemetryRestoreMarkers | Where-Object { $restoreTelemetryCode -notmatch [regex]::Escape($_) })
+if ($missingTelemetryRestoreMarkers.Count -gt 0) {
+  throw "Restore Review Telemetry Query is missing markers: $($missingTelemetryRestoreMarkers -join ', ')"
+}
+
+if ($workflowJson -match [regex]::Escape(".item.json")) {
+  throw "Workflow code must avoid .item.json because paired item data is not stable across Postgres and merge nodes."
 }
 
 $ensureSchemaNode = $workflow.nodes | Where-Object { $_.name -eq "Ensure Review Database Schema" } | Select-Object -First 1

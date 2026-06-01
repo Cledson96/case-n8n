@@ -1,0 +1,648 @@
+{
+  "name": "Document AI Agent - Faithful Document Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/v1/document",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000001",
+      "name": "POST /api/v1/document",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        120,
+        420
+      ],
+      "webhookId": "document-ai-agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst supportedLanguages = ['typescript', 'javascript', 'python', 'php'];\nconst supportedDocTypes = ['technical', 'operational'];\nconst code = String(body.code ?? '').trim();\nconst language = String(body.language ?? '').trim().toLowerCase();\nconst docType = String(body.doc_type ?? '').trim().toLowerCase();\nconst model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : 'openai/gpt-4o-mini';\nconst promptVersion = Number.isInteger(body.prompt_version) && body.prompt_version > 0 ? body.prompt_version : undefined;\nif (!code) throw new Error('O campo code e obrigatorio.');\nif (!supportedLanguages.includes(language)) throw new Error(`Linguagem nao suportada para documentacao: ${language || '(vazia)'}.`);\nif (!supportedDocTypes.includes(docType)) throw new Error(`Tipo de documentacao nao suportado: ${docType || '(vazio)'}.`);\nconst inputPayload = { code, language, doc_type: docType };\nif (promptVersion !== undefined) inputPayload.prompt_version = promptVersion;\nif (body.model !== undefined) inputPayload.model = model;\nconst requestState = { flow_type: 'document', input_payload: inputPayload, model, started_at_ms: Date.now() };\nfunction normalizeForHash(value) { if (Array.isArray(value)) return value.map(normalizeForHash); if (value && typeof value === 'object') { const normalized = {}; for (const key of Object.keys(value).sort()) normalized[key] = normalizeForHash(value[key]); return normalized; } return value; }\nfunction createPayloadHash(text) { let h1 = 0xdeadbeef ^ text.length; let h2 = 0x41c6ce57 ^ text.length; for (let index = 0; index < text.length; index += 1) { const ch = text.charCodeAt(index); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return `${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}`; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst normalizedPayloadText = JSON.stringify(normalizeForHash(inputPayload));\nconst requestHash = createPayloadHash(normalizedPayloadText);\nconst stateJson = JSON.stringify(requestState);\nconst inputJson = JSON.stringify(inputPayload);\nconst cacheLookupQuery = `WITH request_data AS (\\n  SELECT '${sql(inputJson)}'::jsonb AS input_payload,\\n         '${sql(stateJson)}'::jsonb AS request_state,\\n         '${sql(requestHash)}'::text AS request_hash\\n), cached AS (\\n  SELECT id, output_payload\\n  FROM executions\\n  WHERE flow_type = 'document'\\n    AND status = 'success'\\n    AND request_hash = (SELECT request_hash FROM request_data)\\n  ORDER BY created_at DESC\\n  LIMIT 1\\n)\\nSELECT (SELECT request_hash FROM request_data) AS request_hash,\\n       EXISTS(SELECT 1 FROM cached) AS cache_hit,\\n       (SELECT id::text FROM cached) AS source_execution_id,\\n       (SELECT output_payload FROM cached) AS output_payload,\\n       (SELECT request_state FROM request_data) AS request_state;`;\nreturn [{ json: { request_state: requestState, cache_lookup_query: cacheLookupQuery } }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000002",
+      "name": "Prepare Document Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS executions (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    flow_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    input_payload JSONB NOT NULL,\n    output_payload JSONB,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    request_hash TEXT NOT NULL,\n    cache_hit BOOLEAN NOT NULL DEFAULT FALSE,\n    source_execution_id UUID REFERENCES executions (id),\n    error_message TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_executions_created_at\n    ON executions (created_at DESC);\n\nCREATE INDEX IF NOT EXISTS idx_executions_flow_status\n    ON executions (flow_type, status);\n\nCREATE INDEX IF NOT EXISTS idx_executions_flow_hash_status\n    ON executions (flow_type, request_hash, status);\n\nCREATE TABLE IF NOT EXISTS execution_steps (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    execution_id UUID NOT NULL REFERENCES executions (id) ON DELETE CASCADE,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    node_name TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    status TEXT NOT NULL,\n    input_payload JSONB,\n    output_payload JSONB,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    error_message TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_execution_steps_execution_created\n    ON execution_steps (execution_id, created_at);\n\nCREATE TABLE IF NOT EXISTS execution_telemetry (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    execution_id UUID NOT NULL UNIQUE REFERENCES executions (id) ON DELETE CASCADE,\n    provider TEXT NOT NULL,\n    model_requested TEXT NOT NULL,\n    model_used TEXT,\n    openrouter_generation_id TEXT,\n    prompt_tokens INTEGER,\n    completion_tokens INTEGER,\n    total_tokens INTEGER,\n    cost_usd NUMERIC(12, 8),\n    input_cost_usd NUMERIC(12, 8),\n    output_cost_usd NUMERIC(12, 8),\n    cache_read_tokens INTEGER,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n);\n\nSELECT true AS schema_ready;",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000003",
+      "name": "Ensure Document Database Schema",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Prepare Document Request').first().json;\nif (!prepared?.cache_lookup_query) throw new Error('Cache lookup query was not prepared.');\nreturn [{ json: prepared }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000004",
+      "name": "Restore Prepared Document Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.cache_lookup_query }}",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000005",
+      "name": "Cache Lookup",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1080,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cache-hit-condition",
+              "leftValue": "={{ $json.cache_hit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000006",
+      "name": "Use Cached Document?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst requestHash = String($json.request_hash);\nconst sourceExecutionId = String($json.source_execution_id);\nconst outputPayload = $json.output_payload;\nconst durationMs = Math.max(0, Date.now() - Number(state.started_at_ms ?? Date.now()));\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst stateJson = JSON.stringify(state);\nconst inputJson = JSON.stringify(state.input_payload);\nconst outputJson = JSON.stringify(outputPayload);\nconst query = `INSERT INTO executions (id, flow_type, status, input_payload, output_payload, request_hash, cache_hit, source_execution_id, duration_ms)\nVALUES (gen_random_uuid(), 'document', 'success', '${sql(inputJson)}'::jsonb, '${sql(outputJson)}'::jsonb, '${sql(requestHash)}', true, '${sql(sourceExecutionId)}'::uuid, ${durationMs})\nRETURNING id::text AS execution_id, output_payload AS response, '${sql(requestHash)}' AS request_hash, '${sql(sourceExecutionId)}' AS source_execution_id, ${durationMs}::integer AS duration_ms, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { create_cache_hit_query: query } }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000007",
+      "name": "Prepare Cache Hit Persistence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_cache_hit_query }}",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000008",
+      "name": "Create Cache Hit Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1800,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst sourceExecutionId = String($json.source_execution_id);\nconst response = $json.response;\nconst durationMs = Number($json.duration_ms ?? 0);\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst inputPayload = JSON.stringify({ requestHash });\nconst outputPayload = JSON.stringify({ cacheHit: true, sourceExecutionId });\nconst responseJson = JSON.stringify(response);\nconst query = `WITH inserted AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ('${sql(executionId)}'::uuid, 'cache_lookup', 'cache', 'success', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs})\n  RETURNING execution_id\n)\nSELECT '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { record_cached_step_query: query } }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000009",
+      "name": "Prepare Cached Cache Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.record_cached_step_query }}",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000010",
+      "name": "Record Cached Cache Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2280,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json.response }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000011",
+      "name": "Respond Cached Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst requestHash = String($json.request_hash);\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst inputJson = JSON.stringify(state.input_payload);\nconst stateJson = JSON.stringify(state);\nconst query = `INSERT INTO executions (id, flow_type, status, input_payload, request_hash, cache_hit)\nVALUES (gen_random_uuid(), 'document', 'pending', '${sql(inputJson)}'::jsonb, '${sql(requestHash)}', false)\nRETURNING id::text AS execution_id, request_hash, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { create_pending_query: query } }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000012",
+      "name": "Prepare Pending Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_pending_query }}",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000013",
+      "name": "Create Pending Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1800,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst durationMs = Math.max(0, Date.now() - Number(state.started_at_ms ?? Date.now()));\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst stateJson = JSON.stringify(state);\nconst inputPayload = JSON.stringify({ requestHash });\nconst outputPayload = JSON.stringify({ cacheHit: false });\nconst query = `WITH inserted AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ('${sql(executionId)}'::uuid, 'cache_lookup', 'cache', 'success', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs})\n  RETURNING execution_id\n)\nSELECT '${sql(executionId)}' AS execution_id, '${sql(requestHash)}' AS request_hash, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { record_cache_step_query: query } }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000014",
+      "name": "Prepare Cache Lookup Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.record_cache_step_query }}",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000015",
+      "name": "Record Cache Lookup Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2280,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst input = state.input_payload;\nconst executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst promptData = { agent: { role: 'Voce e um Tech Writer Senior e Product Manager Tecnico do sistema CPJ-Cobranca. Sua missao e gerar documentacao rica, precisa e util para o dominio de recuperacao de credito, adaptando o vocabulario para desenvolvedores quando doc_type for technical e para negocio/operacoes quando for operational.', instructions: ['Responda somente JSON valido com doc_type, title, description, inputs, outputs, side_effects, usage_example e notes.', 'Analise code, language e obedeca estritamente ao doc_type solicitado.', 'Para technical, foque assinaturas, tipos, dependencias, excecoes, efeitos colaterais e detalhes de implementacao.', 'Para operational, elimine jargoes de programacao e foque valor de negocio, comportamento visivel e impacto na cobranca.', 'Em inputs e outputs, liste parametros e retornos com name, type e description.', 'Em side_effects, liste alteracoes de estado, banco, webhooks, logs ou chamadas externas; use array vazio se for regra pura.', 'Em notes, destaque riscos tecnicos, LGPD, testabilidade ou regras engessadas.'] } };\nconst exportPatterns = [{ kind: 'function', pattern: /^\\s*export\\s+(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'function', pattern: /^\\s*export\\s+default\\s+(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'class', pattern: /^\\s*export\\s+class\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'constant', pattern: /^\\s*export\\s+(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'interface', pattern: /^\\s*export\\s+interface\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'type', pattern: /^\\s*export\\s+type\\s+([A-Za-z_$][\\w$]*)/ }];\nconst sideEffectPattern = /\\b([A-Za-z_$][\\w$]*\\.(?:save|create|update|delete|insert|post|get|put|patch|request|send))\\s*\\(/g;\nconst lines = input.code.split('\\n');\nfunction extractPublicApiCandidates(lines) { const candidates = []; lines.forEach((line, index) => { for (const { kind, pattern } of exportPatterns) { const match = pattern.exec(line); if (match?.[1]) candidates.push({ name: match[1], kind, line_hint: `linha ${index + 1}` }); } }); return candidates; }\nfunction hasImmediateJsDoc(lines, lineHint) { if (!lineHint) return false; const lineNumber = Number(String(lineHint).replace('linha ', '')); const previousLine = lines[lineNumber - 2]?.trim(); return Boolean(previousLine?.startsWith('/**') || previousLine?.endsWith('*/')); }\nfunction findMissingPublicApiComments(lines, publicApiCandidates) { return publicApiCandidates.filter((candidate) => !hasImmediateJsDoc(lines, candidate.line_hint)).map((candidate) => ({ kind: 'missing_public_api_comment', target: candidate.name, confidence: 'low', description: 'API publica exportada sem comentario JSDoc imediatamente anterior.' })); }\nfunction findPossibleSideEffects(code) { const findings = new Map(); for (const match of code.matchAll(sideEffectPattern)) { const target = match[1]; if (!target || findings.has(target)) continue; findings.set(target, { kind: 'possible_side_effect', target, confidence: 'medium', description: 'Codigo sugere persistencia ou chamada externa que deve ser documentada.' }); } return [...findings.values()]; }\nconst publicApiCandidates = extractPublicApiCandidates(lines);\nconst findings = [...findMissingPublicApiComments(lines, publicApiCandidates), ...findPossibleSideEffects(input.code)];\nconst toolResult = { publicApiCandidates, findings };\nconst systemPrompt = `${promptData.agent.role}\\n\\nLinguagem: ${input.language}\\nTipo de documentacao: ${input.doc_type}\\n\\nInstrucoes:\\n${promptData.agent.instructions.map((instruction) => `- ${instruction}`).join('\\n')}\\n\\nContrato de saida estruturada: responda somente JSON valido com este formato exato: {\"doc_type\":\"technical|operational\",\"title\":\"string\",\"description\":\"string\",\"inputs\":[{\"name\":\"string\",\"type\":\"string\",\"description\":\"string\"}],\"outputs\":[{\"name\":\"string\",\"type\":\"string\",\"description\":\"string\"}],\"side_effects\":[\"string\"],\"usage_example\":\"string\",\"notes\":\"string|null\"}.`;\nconst userPrompt = JSON.stringify({ doc_type: input.doc_type, codigo: input.code, api_publica_detectada: publicApiCandidates, sinais_deterministicos: findings }, null, 2);\nreturn [{ json: { execution_id: executionId, request_hash: requestHash, request_state: state, language: input.language, doc_type: input.doc_type, tool_result: toolResult, document_system_prompt: systemPrompt, document_user_prompt: userPrompt } }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000016",
+      "name": "Document Signal Extractor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.document_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.document_system_prompt }}"
+        }
+      },
+      "id": "33333333-3333-4333-8333-000000000017",
+      "name": "Document Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2760,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $(\"Document Signal Extractor\").first().json.request_state.model }}",
+        "options": {
+          "temperature": 0.1,
+          "maxRetries": 2,
+          "timeout": 120000
+        }
+      },
+      "id": "33333333-3333-4333-8333-000000000018",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        2760,
+        820
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Document Signal Extractor').first().json;\nconst raw = $json.output ?? $json.text ?? $json.response ?? $json;\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction normalizeStringArray(value) { return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : []; }\nfunction normalizeIoItems(value) { return Array.isArray(value) ? value.map((item) => ({ name: String(item?.name ?? 'item').trim() || 'item', type: String(item?.type ?? 'unknown').trim() || 'unknown', description: String(item?.description ?? '').trim() || 'Sem descricao inferida.' })) : []; }\nfunction normalizeDocument(value) { const docType = ['technical', 'operational'].includes(value.doc_type) ? value.doc_type : context.doc_type; return { doc_type: docType, title: String(value.title ?? 'Documentacao gerada').trim() || 'Documentacao gerada', description: String(value.description ?? 'Documentacao gerada a partir do codigo informado.').trim() || 'Documentacao gerada a partir do codigo informado.', inputs: normalizeIoItems(value.inputs), outputs: normalizeIoItems(value.outputs), side_effects: normalizeStringArray(value.side_effects), usage_example: String(value.usage_example ?? 'Sem exemplo inferido.').trim() || 'Sem exemplo inferido.', notes: value.notes == null ? null : String(value.notes).trim() || null }; }\nfunction parseDocumentOutput(value) { if (typeof value === 'object' && value !== null && !Array.isArray(value)) return normalizeDocument(value); const text = cleanJsonText(value); try { return normalizeDocument(JSON.parse(text)); } catch { return { doc_type: context.doc_type, title: 'Documentacao indisponivel', description: 'O agente retornou conteudo fora do JSON estruturado esperado.', inputs: [], outputs: [], side_effects: [], usage_example: 'Reexecute a geracao de documentacao apos ajustar o prompt/schema.', notes: text.slice(0, 500) || 'Saida invalida do agente de documentacao.' }; } }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nfunction estimateTokens(value) { return Math.ceil(String(value ?? '').length / 4); }\nconst response = parseDocumentOutput(raw);\nconst executionId = context.execution_id;\nconst durationMs = Math.max(0, Date.now() - Number(context.request_state.started_at_ms ?? Date.now()));\nconst responseJson = JSON.stringify(response);\nconst promptText = [context.document_system_prompt, context.document_user_prompt].join('\\n');\nconst completionText = JSON.stringify(response);\nconst promptTokens = estimateTokens(promptText);\nconst completionTokens = estimateTokens(completionText);\nconst totalTokens = promptTokens + completionTokens;\nconst inputCostUsd = Number(((promptTokens / 1000000) * 0.15).toFixed(8));\nconst outputCostUsd = Number(((completionTokens / 1000000) * 0.60).toFixed(8));\nconst costUsd = Number((inputCostUsd + outputCostUsd).toFixed(8));\nconst stepRows = [];\nfunction addStep(nodeName, kind, inputPayload, outputPayload) { stepRows.push(`('${sql(executionId)}'::uuid, '${sql(nodeName)}', '${sql(kind)}', 'success', '${sql(JSON.stringify(inputPayload ?? null))}'::jsonb, '${sql(JSON.stringify(outputPayload ?? null))}'::jsonb, 0)`); }\naddStep('document_signal_extractor', 'tool', { language: context.language, doc_type: context.doc_type }, context.tool_result);\naddStep('document_agent', 'llm', { publicApiCandidates: context.tool_result.publicApiCandidates, findings: context.tool_result.findings }, response);\nconst persistSuccessQuery = `WITH updated AS (\\n  UPDATE executions\\n  SET status = 'success', output_payload = '${sql(responseJson)}'::jsonb, duration_ms = ${durationMs}, error_message = NULL, updated_at = NOW()\\n  WHERE id = '${sql(executionId)}'::uuid\\n  RETURNING id\\n), inserted_steps AS (\\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\\n  VALUES ${stepRows.join(',\\n         ')}\\n  RETURNING execution_id\\n)\\nSELECT '${sql(responseJson)}'::jsonb AS response, '${sql(executionId)}' AS execution_id, ${durationMs}::integer AS duration_ms, ${promptTokens}::integer AS prompt_tokens, ${completionTokens}::integer AS completion_tokens, ${totalTokens}::integer AS total_tokens, ${costUsd}::numeric(12,8) AS cost_usd, ${inputCostUsd}::numeric(12,8) AS input_cost_usd, ${outputCostUsd}::numeric(12,8) AS output_cost_usd, '${sql(context.request_state.model)}' AS model_used;`;\nconst telemetryQuery = `INSERT INTO execution_telemetry (execution_id, provider, model_requested, model_used, prompt_tokens, completion_tokens, total_tokens, cost_usd, input_cost_usd, output_cost_usd, cache_read_tokens)\\nVALUES ('${sql(executionId)}'::uuid, 'openrouter', '${sql(context.request_state.model)}', '${sql(context.request_state.model)}', ${promptTokens}, ${completionTokens}, ${totalTokens}, ${costUsd}, ${inputCostUsd}, ${outputCostUsd}, NULL)\\nON CONFLICT (execution_id) DO UPDATE SET model_used = EXCLUDED.model_used, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, total_tokens = EXCLUDED.total_tokens, cost_usd = EXCLUDED.cost_usd, input_cost_usd = EXCLUDED.input_cost_usd, output_cost_usd = EXCLUDED.output_cost_usd, cache_read_tokens = EXCLUDED.cache_read_tokens\\nRETURNING '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { response, persist_success_query: persistSuccessQuery, telemetry_query: telemetryQuery } }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000019",
+      "name": "Normalize Document Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.persist_success_query }}",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000020",
+      "name": "Persist Document Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3240,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalized = $('Normalize Document Output').first().json;\nif (!normalized?.telemetry_query) throw new Error('Telemetry query was not prepared.');\nreturn [{ json: normalized }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000021",
+      "name": "Restore Document Telemetry Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3480,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.telemetry_query }}",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-000000000022",
+      "name": "Record Document Telemetry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3720,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json.response }];"
+      },
+      "id": "33333333-3333-4333-8333-000000000023",
+      "name": "Respond Structured Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        580
+      ]
+    }
+  ],
+  "connections": {
+    "POST /api/v1/document": {
+      "main": [
+        [
+          {
+            "node": "Prepare Document Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Document Request": {
+      "main": [
+        [
+          {
+            "node": "Ensure Document Database Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Document Database Schema": {
+      "main": [
+        [
+          {
+            "node": "Restore Prepared Document Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Prepared Document Request": {
+      "main": [
+        [
+          {
+            "node": "Cache Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Lookup": {
+      "main": [
+        [
+          {
+            "node": "Use Cached Document?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Cached Document?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cache Hit Persistence",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cache Hit Persistence": {
+      "main": [
+        [
+          {
+            "node": "Create Cache Hit Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Cache Hit Execution": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cached Cache Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cached Cache Step": {
+      "main": [
+        [
+          {
+            "node": "Record Cached Cache Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Cached Cache Step": {
+      "main": [
+        [
+          {
+            "node": "Respond Cached Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Create Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cache Lookup Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cache Lookup Step": {
+      "main": [
+        [
+          {
+            "node": "Record Cache Lookup Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Cache Lookup Step": {
+      "main": [
+        [
+          {
+            "node": "Document Signal Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Signal Extractor": {
+      "main": [
+        [
+          {
+            "node": "Document Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Agent": {
+      "main": [
+        [
+          {
+            "node": "Normalize Document Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Document Output": {
+      "main": [
+        [
+          {
+            "node": "Persist Document Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Document Success": {
+      "main": [
+        [
+          {
+            "node": "Restore Document Telemetry Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Document Telemetry Query": {
+      "main": [
+        [
+          {
+            "node": "Record Document Telemetry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Document Telemetry": {
+      "main": [
+        [
+          {
+            "node": "Respond Structured Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Document Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "b86c66f9-32d9-47a2-93d2-documentflow"
+}

@@ -1,0 +1,338 @@
+{
+  "name": "Batch Flow Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/v1/batch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-000000000001",
+      "name": "POST /api/v1/batch",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        120,
+        420
+      ],
+      "webhookId": "batch-flow-orchestrator"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst items = Array.isArray(body.items) ? body.items : [];\nconst supportedFlows = new Set(['review', 'compliance', 'document', 'tests']);\nif (items.length === 0) throw new Error('O campo items deve conter ao menos um item.');\nconst continueOnError = body.continue_on_error !== false;\nconst notify = body.notify === true;\nconst startedAtMs = Date.now();\nfunction createUuid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => { const random = Math.floor(Math.random() * 16); const value = character === 'x' ? random : ((random & 0x3) | 0x8); return value.toString(16); }); }\nconst batchId = createUuid();\nfunction assertNonEmpty(value, field, index) { if (typeof value !== 'string' || !value.trim()) throw new Error(`Item ${index}: o campo ${field} e obrigatorio.`); }\nfunction validatePayload(flowType, payload, index) { if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error(`Item ${index}: payload invalido.`); assertNonEmpty(payload.code, 'code', index); assertNonEmpty(payload.language, 'language', index); if (flowType === 'compliance') assertNonEmpty(payload.task_description, 'task_description', index); if (flowType === 'document' && !['technical', 'operational'].includes(String(payload.doc_type ?? '').trim())) throw new Error(`Item ${index}: doc_type deve ser technical ou operational.`); if (flowType === 'tests') assertNonEmpty(payload.test_framework, 'test_framework', index); }\nconst preparedItems = items.map((item, index) => { const flowType = String(item?.flow_type ?? '').trim(); if (!supportedFlows.has(flowType)) throw new Error(`Item ${index}: flow_type nao suportado: ${flowType || '(vazio)'}.`); validatePayload(flowType, item.payload, index); return { index, flow_type: flowType, payload: item.payload, endpoint: `/webhook/api/v1/${flowType}`, batch_id: batchId, started_at_ms: startedAtMs, continue_on_error: continueOnError, notify }; });\nreturn [{ json: { batch_id: batchId, started_at_ms: startedAtMs, continue_on_error: continueOnError, notify, total_items: preparedItems.length, prepared_items: preparedItems } }];"
+      },
+      "id": "55555555-5555-4555-8555-000000000002",
+      "name": "Prepare Batch Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS batch_executions (\n    id UUID PRIMARY KEY,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    status TEXT NOT NULL,\n    item_count INTEGER NOT NULL,\n    success_count INTEGER NOT NULL,\n    failed_count INTEGER NOT NULL,\n    duration_ms INTEGER NOT NULL DEFAULT 0\n);\n\nSELECT true AS schema_ready;",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-000000000003",
+      "name": "Ensure Batch Database Schema",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Prepare Batch Request').first().json;\nif (!Array.isArray(prepared.prepared_items) || prepared.prepared_items.length === 0) throw new Error('Batch items were not prepared.');\nreturn prepared.prepared_items.map((item) => ({ json: item }));"
+      },
+      "id": "55555555-5555-4555-8555-000000000004",
+      "name": "Restore Prepared Batch Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-000000000005",
+      "name": "Loop Over Batch Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1080,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://127.0.0.1:5678' + $json.endpoint }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "includeResponseHeadersAndStatus": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "55555555-5555-4555-8555-000000000006",
+      "name": "Execute Flow Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('Loop Over Batch Items').first().json;\nconst response = $json;\nconst statusCode = Number(response.statusCode ?? response.status ?? 200);\nconst responseBody = response.body ?? response;\nconst success = statusCode >= 200 && statusCode < 300;\nconst errorMessage = success ? null : String(responseBody?.message ?? responseBody?.error ?? `HTTP ${statusCode}`);\nreturn [{ json: { index: original.index, flow_type: original.flow_type, execution_id: null, status: success ? 'success' : 'failed', cache_hit: null, output: success ? responseBody : null, error_message: errorMessage, batch_id: original.batch_id, started_at_ms: original.started_at_ms, continue_on_error: original.continue_on_error, notify: original.notify } }];"
+      },
+      "id": "55555555-5555-4555-8555-000000000007",
+      "name": "Normalize Batch Item Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "continue-batch-loop-condition",
+              "leftValue": "={{ $json.status === 'success' || $json.continue_on_error === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-000000000008",
+      "name": "Continue Batch Loop?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1800,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $('Normalize Batch Item Result').all().map((item) => item.json).sort((a, b) => a.index - b.index);\nconst prepared = $('Prepare Batch Request').first().json;\nconst successCount = results.filter((result) => result.status === 'success').length;\nconst failedCount = results.filter((result) => result.status === 'failed').length;\nconst status = failedCount === 0 ? 'success' : successCount === 0 ? 'failed' : 'partial';\nconst durationMs = Math.max(0, Date.now() - Number(prepared.started_at_ms));\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst summaryQuery = `INSERT INTO batch_executions (id, status, item_count, success_count, failed_count, duration_ms)\\nVALUES ('${sql(prepared.batch_id)}'::uuid, '${sql(status)}', ${prepared.total_items}, ${successCount}, ${failedCount}, ${durationMs})\\nON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, item_count = EXCLUDED.item_count, success_count = EXCLUDED.success_count, failed_count = EXCLUDED.failed_count, duration_ms = EXCLUDED.duration_ms\\nRETURNING id::text AS batch_id, '${sql(status)}' AS status, '${sql(JSON.stringify(results))}'::jsonb AS results;`;\nreturn [{ json: { persist_batch_summary_query: summaryQuery } }];"
+      },
+      "id": "55555555-5555-4555-8555-000000000009",
+      "name": "Collect Batch Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.persist_batch_summary_query }}",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-000000000010",
+      "name": "Persist Batch Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { batch_id: String($json.batch_id), status: String($json.status), results: Array.isArray($json.results) ? $json.results : [] } }];"
+      },
+      "id": "55555555-5555-4555-8555-000000000011",
+      "name": "Respond Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "POST /api/v1/batch": {
+      "main": [
+        [
+          {
+            "node": "Prepare Batch Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Batch Request": {
+      "main": [
+        [
+          {
+            "node": "Ensure Batch Database Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Batch Database Schema": {
+      "main": [
+        [
+          {
+            "node": "Restore Prepared Batch Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Prepared Batch Items": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Batch Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Batch Items": {
+      "main": [
+        [
+          {
+            "node": "Collect Batch Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Flow Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Flow Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Batch Item Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Batch Item Result": {
+      "main": [
+        [
+          {
+            "node": "Continue Batch Loop?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue Batch Loop?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Batch Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collect Batch Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Batch Results": {
+      "main": [
+        [
+          {
+            "node": "Persist Batch Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Batch Summary": {
+      "main": [
+        [
+          {
+            "node": "Respond Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "d34cad11-94d9-4703-bf13-batchflow"
+}

@@ -1,0 +1,925 @@
+{
+  "name": "Pull Request Review AI Agents",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/v1/review/pull-request",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000001",
+      "name": "POST /api/v1/review/pull-request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        120,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body=$json.body??$json; const url=String(body.github_pull_request_url??'').trim(); const match=/^https:\\/\\/github\\.com\\/([^/]+)\\/([^/]+)\\/pull\\/(\\d+)\\/?$/.exec(url); if(!match) throw new Error('URL de pull request invalida.'); const input={github_pull_request_url:url,base_branch:String(body.base_branch??'main').trim()||'main'}; if(typeof body.jira_issue_key==='string'&&body.jira_issue_key.trim()){ input.jira_issue_key=body.jira_issue_key.trim(); const jiraBaseUrl=String(body.jira_base_url??'').trim().replace(/\\/$/,''); if(!/^https:\\/\\//.test(jiraBaseUrl)) throw new Error('O campo jira_base_url HTTPS e obrigatorio quando jira_issue_key for enviado.'); input.jira_base_url=jiraBaseUrl; } if(Number.isInteger(body.prompt_version)&&body.prompt_version>0) input.prompt_version=body.prompt_version; if(typeof body.model==='string'&&body.model.trim()) input.model=body.model.trim(); const state={flow_type:'pull_request_review',input_payload:input,model:input.model??'openai/gpt-4o-mini',owner:match[1],repo:match[2],number:Number(match[3]),started_at_ms:Date.now()}; function hash(text){let h=2166136261; for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)} return (h>>>0).toString(16).padStart(8,'0')} function sql(v){return String(v).replaceAll(\"'\",\"''\")} const requestHash=hash(JSON.stringify(input)); const q=`WITH cached AS (SELECT id,output_payload FROM executions WHERE flow_type='pull_request_review' AND status='success' AND request_hash='${sql(requestHash)}' ORDER BY created_at DESC LIMIT 1) SELECT '${sql(requestHash)}' AS request_hash, EXISTS(SELECT 1 FROM cached) AS cache_hit, (SELECT id::text FROM cached) AS source_execution_id, (SELECT output_payload FROM cached) AS output_payload, '${sql(JSON.stringify(state))}'::jsonb AS request_state;`; return [{json:{request_state:state,cache_lookup_query:q}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000002",
+      "name": "Prepare Pull Request Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS executions (\n id UUID PRIMARY KEY DEFAULT gen_random_uuid(), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), flow_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', input_payload JSONB NOT NULL, output_payload JSONB, duration_ms INTEGER NOT NULL DEFAULT 0, request_hash TEXT NOT NULL, cache_hit BOOLEAN NOT NULL DEFAULT FALSE, source_execution_id UUID REFERENCES executions (id), error_message TEXT\n);\nCREATE TABLE IF NOT EXISTS execution_steps (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), execution_id UUID NOT NULL REFERENCES executions (id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), node_name TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, input_payload JSONB, output_payload JSONB, duration_ms INTEGER NOT NULL DEFAULT 0, error_message TEXT);\nCREATE TABLE IF NOT EXISTS execution_telemetry (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), execution_id UUID NOT NULL UNIQUE REFERENCES executions (id) ON DELETE CASCADE, provider TEXT NOT NULL, model_requested TEXT NOT NULL, model_used TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, cost_usd NUMERIC(12,8), input_cost_usd NUMERIC(12,8), output_cost_usd NUMERIC(12,8), cache_read_tokens INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());\nSELECT true AS schema_ready;",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000003",
+      "name": "Ensure Pull Request Review Schema",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared=$('Prepare Pull Request Review').first().json; if(!prepared?.cache_lookup_query) throw new Error('Cache query ausente.'); return [{json:prepared}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000004",
+      "name": "Restore Prepared Pull Request Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.cache_lookup_query }}",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000005",
+      "name": "Cache Lookup",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1000,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.cache_hit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000006",
+      "name": "Use Cached Pull Request Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:$json.output_payload}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000007",
+      "name": "Respond Cached Pull Request Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const s=$json.request_state; function sql(v){return String(v).replaceAll(\"'\",\"''\")} const q=`INSERT INTO executions(flow_type,status,input_payload,request_hash,cache_hit) VALUES('pull_request_review','pending','${sql(JSON.stringify(s.input_payload))}'::jsonb,'${sql($json.request_hash)}',false) RETURNING id::text AS execution_id,'${sql(JSON.stringify(s))}'::jsonb AS request_state;`; return [{json:{create_pending_query:q}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000008",
+      "name": "Prepare Pending Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_pending_query }}",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000009",
+      "name": "Create Pending Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1660,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ `https://api.github.com/repos/${$(\"Prepare Pull Request Review\").first().json.request_state.owner}/${$(\"Prepare Pull Request Review\").first().json.request_state.repo}/pulls/${$(\"Prepare Pull Request Review\").first().json.request_state.number}` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000010",
+      "name": "Fetch GitHub Pull Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1880,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ `https://api.github.com/repos/${$(\"Prepare Pull Request Review\").first().json.request_state.owner}/${$(\"Prepare Pull Request Review\").first().json.request_state.repo}/pulls/${$(\"Prepare Pull Request Review\").first().json.request_state.number}` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3.diff"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "66666666-6666-4666-8666-000000000011",
+      "name": "Fetch GitHub Diff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1880,
+        620
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ `https://api.github.com/repos/${$(\"Prepare Pull Request Review\").first().json.request_state.owner}/${$(\"Prepare Pull Request Review\").first().json.request_state.repo}/pulls/${$(\"Prepare Pull Request Review\").first().json.request_state.number}/files?per_page=100` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000012",
+      "name": "Fetch GitHub Changed Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1880,
+        840
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const pending=$('Create Pending Execution').first().json; const s=$('Prepare Pull Request Review').first().json.request_state; const pr=$('Fetch GitHub Pull Request').first().json; const diff=$('Fetch GitHub Diff').first().json; const files=$('Fetch GitHub Changed Files').first().json; return [{json:{execution_id:pending.execution_id,request_state:pending.request_state,source:{pull_request:{owner:s.owner,repo:s.repo,number:s.number,title:pr.title??`Pull request #${s.number}`,base_branch:s.input_payload.base_branch,head_sha:pr.head?.sha??'',changed_files:pr.changed_files??(Array.isArray(files)?files.length:0)},diff:typeof diff==='string'?diff:JSON.stringify(diff),files:Array.isArray(files)?files:[]}}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000014",
+      "name": "Build Pull Request Source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Boolean($json.request_state.input_payload.jira_issue_key) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000015",
+      "name": "Has Jira Issue?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2560,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ `${$json.request_state.input_payload.jira_base_url}/rest/api/3/issue/${$json.request_state.input_payload.jira_issue_key}?fields=summary,description` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000016",
+      "name": "Fetch Jira Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2780,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Jira account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const issue=$json; const text=typeof issue.fields?.description==='string'?issue.fields.description:JSON.stringify(issue.fields?.description??''); const criteria=text.split(/\\r?\\n|(?=- )|(?=\\* )/).map(v=>v.trim()).filter(v=>/^[-*]\\s+/.test(v)).map(v=>v.replace(/^[-*]\\s+/,'')); return [{json:{jira:{issue_key:issue.key,summary:issue.fields?.summary??issue.key,description:text,acceptance_criteria:criteria.length?criteria:(text?[text]:[])}}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000017",
+      "name": "Prepare Jira Issue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{jira:null}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000018",
+      "name": "Skip Jira Issue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        740
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2,
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000019",
+      "name": "Merge Jira Branch",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3220,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source=$('Build Pull Request Source').first().json; const jiraBranch=$json; const jira=jiraBranch.jira??null; const files=source.source.files.slice(0,25).map(f=>({filename:f.filename,status:f.status,patch:String(f.patch??'').slice(0,900)})); const payload={request:source.request_state.input_payload,pull_request:source.source.pull_request,diff:String(source.source.diff??'').slice(0,12000),changed_files:files,project_context_files:[],code_standards:[{technology:'embedded',content:'Avalie clareza, consistencia do projeto, seguranca, validacao de entrada, tratamento de erros e riscos LGPD.'}],jira,truncation:{truncated:source.source.files.length>25||String(source.source.diff??'').length>12000,notes:[]}}; const base=JSON.stringify(payload,null,2); const language='Responda integralmente em portugues brasileiro. Mantenha apenas as chaves tecnicas do JSON no formato solicitado. '; const prompts={code_standard:language+'Avalie aderencia a padroes de codigo. Retorne JSON {status,findings}.',project_consistency:language+'Avalie consistencia com o projeto. Retorne JSON {status,findings}.',security:language+'Avalie seguranca, LGPD e vulnerabilidades. Retorne JSON {status,findings}.',jira_criteria:jira?language+'Avalie criterios Jira. Retorne JSON {status,criteria}.':language+'Sem Jira: retorne JSON {status:\"skipped\",criteria:[]}.',aggregator:language+'Consolide a revisao da PR. Retorne JSON {verdict,score,summary,positives,recommendations}.'}; return [{json:{...source,jira,analysis_payload:payload,agent_prompt:base,prompts}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000020",
+      "name": "Prepare Pull Request Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Prepare Pull Request Analysis').first().json.agent_prompt }}",
+        "options": {
+          "systemMessage": "={{ $('Prepare Pull Request Analysis').first().json.prompts.code_standard }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-000000000021",
+      "name": "Code Standard Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3680,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Prepare Pull Request Analysis').first().json.agent_prompt }}",
+        "options": {
+          "systemMessage": "={{ $('Prepare Pull Request Analysis').first().json.prompts.project_consistency }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-000000000022",
+      "name": "Project Consistency Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3680,
+        530
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Prepare Pull Request Analysis').first().json.agent_prompt }}",
+        "options": {
+          "systemMessage": "={{ $('Prepare Pull Request Analysis').first().json.prompts.security }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-000000000023",
+      "name": "Security Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3680,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Prepare Pull Request Analysis').first().json.agent_prompt }}",
+        "options": {
+          "systemMessage": "={{ $('Prepare Pull Request Analysis').first().json.prompts.jira_criteria }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-000000000024",
+      "name": "Jira Criteria Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3680,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $(\"Prepare Pull Request Review\").first().json.request_state.model }}",
+        "options": {
+          "temperature": 0.1,
+          "maxRetries": 2,
+          "timeout": 120000
+        }
+      },
+      "id": "66666666-6666-4666-8666-000000000025",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        3680,
+        1080
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx=$('Prepare Pull Request Analysis').first().json; const items=[{json:$('Code Standard Agent').first().json},{json:$('Project Consistency Agent').first().json},{json:$('Security Agent').first().json},{json:$('Jira Criteria Agent').first().json}]; const names=['code_standard','project_consistency','security','jira_criteria']; function parse(v,f){const raw=v.output??v.text??v.response??v; try{return typeof raw==='object'?raw:JSON.parse(String(raw).replace(/^```json/i,'').replace(/```$/,'').trim())}catch{return f}} const sections={code_standard:parse(items[0]?.json??{}, {status:'warning',findings:[]}),project_consistency:parse(items[1]?.json??{}, {status:'warning',findings:[]}),security:parse(items[2]?.json??{}, {status:'warning',findings:[]}),jira_criteria:parse(items[3]?.json??{}, {status:ctx.jira?'warning':'skipped',criteria:[]})}; return [{json:{...ctx,sections,aggregator_prompt:JSON.stringify({...ctx.analysis_payload,section_outputs:sections},null,2)}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000027",
+      "name": "Build Pull Request Aggregator Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.aggregator_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.prompts.aggregator }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-000000000028",
+      "name": "Pull Request Review Aggregator",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        4380,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx=$('Build Pull Request Aggregator Prompt').first().json; const raw=$json.output??$json.text??$json.response??$json; let d; try{d=typeof raw==='object'?raw:JSON.parse(String(raw).replace(/^```json/i,'').replace(/```$/,'').trim())}catch{d={verdict:'needs_attention',score:50,summary:'Agregador retornou saida invalida.',positives:[],recommendations:[]}} const out={verdict:['approved','changes_requested','needs_attention'].includes(d.verdict)?d.verdict:'needs_attention',score:Math.max(0,Math.min(100,Number(d.score)||50)),summary:String(d.summary??'Review concluido.'),pull_request:ctx.source.pull_request,jira:ctx.jira?{issue_key:ctx.jira.issue_key,summary:ctx.jira.summary,criteria_count:ctx.jira.acceptance_criteria.length,evaluated:true}:null,sections:ctx.sections,positives:Array.isArray(d.positives)?d.positives:[],recommendations:Array.isArray(d.recommendations)?d.recommendations:[]}; function sql(v){return String(v).replaceAll(\"'\",\"''\")} const response=JSON.stringify(out); const executionId=ctx.execution_id; const duration=Date.now()-ctx.request_state.started_at_ms; const persist=`UPDATE executions SET status='success',output_payload='${sql(response)}'::jsonb,duration_ms=${duration},updated_at=NOW() WHERE id='${sql(executionId)}'::uuid RETURNING '${sql(response)}'::jsonb AS response;`; const telemetry=`INSERT INTO execution_telemetry(execution_id,provider,model_requested,model_used) VALUES('${sql(executionId)}'::uuid,'openrouter','${sql(ctx.request_state.model)}','${sql(ctx.request_state.model)}') ON CONFLICT(execution_id) DO UPDATE SET model_used=EXCLUDED.model_used RETURNING '${sql(response)}'::jsonb AS response;`; return [{json:{response:out,persist_success_query:persist,telemetry_query:telemetry}}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000029",
+      "name": "Normalize Pull Request Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4600,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.persist_success_query }}",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000030",
+      "name": "Persist Pull Request Review",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4820,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const n=$('Normalize Pull Request Review').first().json; return [{json:n}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000031",
+      "name": "Restore Pull Request Telemetry Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.telemetry_query }}",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-000000000032",
+      "name": "Record Pull Request Telemetry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5260,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:$json.response}];"
+      },
+      "id": "66666666-6666-4666-8666-000000000033",
+      "name": "Respond Pull Request Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5480,
+        620
+      ]
+    }
+  ],
+  "connections": {
+    "POST /api/v1/review/pull-request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Pull Request Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pull Request Review": {
+      "main": [
+        [
+          {
+            "node": "Ensure Pull Request Review Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Pull Request Review Schema": {
+      "main": [
+        [
+          {
+            "node": "Restore Prepared Pull Request Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Prepared Pull Request Review": {
+      "main": [
+        [
+          {
+            "node": "Cache Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Lookup": {
+      "main": [
+        [
+          {
+            "node": "Use Cached Pull Request Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Cached Pull Request Review?": {
+      "main": [
+        [
+          {
+            "node": "Respond Cached Pull Request Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Create Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Fetch GitHub Pull Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GitHub Pull Request": {
+      "main": [
+        [
+          {
+            "node": "Fetch GitHub Diff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GitHub Diff": {
+      "main": [
+        [
+          {
+            "node": "Fetch GitHub Changed Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GitHub Changed Files": {
+      "main": [
+        [
+          {
+            "node": "Build Pull Request Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pull Request Source": {
+      "main": [
+        [
+          {
+            "node": "Has Jira Issue?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Jira Issue?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Jira Issue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Jira Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Jira Issue": {
+      "main": [
+        [
+          {
+            "node": "Prepare Jira Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Jira Issue": {
+      "main": [
+        [
+          {
+            "node": "Merge Jira Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Jira Issue": {
+      "main": [
+        [
+          {
+            "node": "Merge Jira Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Jira Branch": {
+      "main": [
+        [
+          {
+            "node": "Prepare Pull Request Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pull Request Analysis": {
+      "main": [
+        [
+          {
+            "node": "Code Standard Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Standard Agent": {
+      "main": [
+        [
+          {
+            "node": "Project Consistency Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Consistency Agent": {
+      "main": [
+        [
+          {
+            "node": "Security Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Security Agent": {
+      "main": [
+        [
+          {
+            "node": "Jira Criteria Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Criteria Agent": {
+      "main": [
+        [
+          {
+            "node": "Build Pull Request Aggregator Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pull Request Aggregator Prompt": {
+      "main": [
+        [
+          {
+            "node": "Pull Request Review Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Request Review Aggregator": {
+      "main": [
+        [
+          {
+            "node": "Normalize Pull Request Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Pull Request Review": {
+      "main": [
+        [
+          {
+            "node": "Persist Pull Request Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Pull Request Review": {
+      "main": [
+        [
+          {
+            "node": "Restore Pull Request Telemetry Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Pull Request Telemetry Query": {
+      "main": [
+        [
+          {
+            "node": "Record Pull Request Telemetry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Pull Request Telemetry": {
+      "main": [
+        [
+          {
+            "node": "Respond Pull Request Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Code Standard Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Project Consistency Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Security Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Jira Criteria Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Pull Request Review Aggregator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "f1d6e6cd-40dd-48cd-b76c-pullrequestreview"
+}

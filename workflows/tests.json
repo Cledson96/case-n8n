@@ -1,0 +1,648 @@
+{
+  "name": "Tests AI Agent - Faithful Tests Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/v1/tests",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000001",
+      "name": "POST /api/v1/tests",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        120,
+        420
+      ],
+      "webhookId": "tests-ai-agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst supportedLanguages = ['typescript', 'javascript', 'python', 'php'];\nconst code = String(body.code ?? '').trim();\nconst language = String(body.language ?? '').trim().toLowerCase();\nconst testFramework = String(body.test_framework ?? '').trim();\nconst model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : 'openai/gpt-4o-mini';\nconst promptVersion = Number.isInteger(body.prompt_version) && body.prompt_version > 0 ? body.prompt_version : undefined;\nif (!code) throw new Error('O campo code e obrigatorio.');\nif (!supportedLanguages.includes(language)) throw new Error(`Linguagem nao suportada para testes: ${language || '(vazia)'}.`);\nif (!testFramework) throw new Error('O campo test_framework e obrigatorio.');\nconst inputPayload = { code, language, test_framework: testFramework };\nif (promptVersion !== undefined) inputPayload.prompt_version = promptVersion;\nif (body.model !== undefined) inputPayload.model = model;\nconst requestState = { flow_type: 'tests', input_payload: inputPayload, model, started_at_ms: Date.now() };\nfunction normalizeForHash(value) { if (Array.isArray(value)) return value.map(normalizeForHash); if (value && typeof value === 'object') { const normalized = {}; for (const key of Object.keys(value).sort()) normalized[key] = normalizeForHash(value[key]); return normalized; } return value; }\nfunction createPayloadHash(text) { let h1 = 0xdeadbeef ^ text.length; let h2 = 0x41c6ce57 ^ text.length; for (let index = 0; index < text.length; index += 1) { const ch = text.charCodeAt(index); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return `${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}`; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst normalizedPayloadText = JSON.stringify(normalizeForHash(inputPayload));\nconst requestHash = createPayloadHash(normalizedPayloadText);\nconst stateJson = JSON.stringify(requestState);\nconst inputJson = JSON.stringify(inputPayload);\nconst cacheLookupQuery = `WITH request_data AS (\\n  SELECT '${sql(inputJson)}'::jsonb AS input_payload,\\n         '${sql(stateJson)}'::jsonb AS request_state,\\n         '${sql(requestHash)}'::text AS request_hash\\n), cached AS (\\n  SELECT id, output_payload\\n  FROM executions\\n  WHERE flow_type = 'tests'\\n    AND status = 'success'\\n    AND request_hash = (SELECT request_hash FROM request_data)\\n  ORDER BY created_at DESC\\n  LIMIT 1\\n)\\nSELECT (SELECT request_hash FROM request_data) AS request_hash,\\n       EXISTS(SELECT 1 FROM cached) AS cache_hit,\\n       (SELECT id::text FROM cached) AS source_execution_id,\\n       (SELECT output_payload FROM cached) AS output_payload,\\n       (SELECT request_state FROM request_data) AS request_state;`;\nreturn [{ json: { request_state: requestState, cache_lookup_query: cacheLookupQuery } }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000002",
+      "name": "Prepare Tests Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS executions (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    flow_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    input_payload JSONB NOT NULL,\n    output_payload JSONB,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    request_hash TEXT NOT NULL,\n    cache_hit BOOLEAN NOT NULL DEFAULT FALSE,\n    source_execution_id UUID REFERENCES executions (id),\n    error_message TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_executions_created_at\n    ON executions (created_at DESC);\n\nCREATE INDEX IF NOT EXISTS idx_executions_flow_status\n    ON executions (flow_type, status);\n\nCREATE INDEX IF NOT EXISTS idx_executions_flow_hash_status\n    ON executions (flow_type, request_hash, status);\n\nCREATE TABLE IF NOT EXISTS execution_steps (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    execution_id UUID NOT NULL REFERENCES executions (id) ON DELETE CASCADE,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    node_name TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    status TEXT NOT NULL,\n    input_payload JSONB,\n    output_payload JSONB,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    error_message TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_execution_steps_execution_created\n    ON execution_steps (execution_id, created_at);\n\nCREATE TABLE IF NOT EXISTS execution_telemetry (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    execution_id UUID NOT NULL UNIQUE REFERENCES executions (id) ON DELETE CASCADE,\n    provider TEXT NOT NULL,\n    model_requested TEXT NOT NULL,\n    model_used TEXT,\n    openrouter_generation_id TEXT,\n    prompt_tokens INTEGER,\n    completion_tokens INTEGER,\n    total_tokens INTEGER,\n    cost_usd NUMERIC(12, 8),\n    input_cost_usd NUMERIC(12, 8),\n    output_cost_usd NUMERIC(12, 8),\n    cache_read_tokens INTEGER,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n);\n\nSELECT true AS schema_ready;",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000003",
+      "name": "Ensure Tests Database Schema",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Prepare Tests Request').first().json;\nif (!prepared?.cache_lookup_query) throw new Error('Cache lookup query was not prepared.');\nreturn [{ json: prepared }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000004",
+      "name": "Restore Prepared Tests Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.cache_lookup_query }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000005",
+      "name": "Cache Lookup",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1080,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cache-hit-condition",
+              "leftValue": "={{ $json.cache_hit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000006",
+      "name": "Use Cached Tests?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst requestHash = String($json.request_hash);\nconst sourceExecutionId = String($json.source_execution_id);\nconst outputPayload = $json.output_payload;\nconst durationMs = Math.max(0, Date.now() - Number(state.started_at_ms ?? Date.now()));\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst stateJson = JSON.stringify(state);\nconst inputJson = JSON.stringify(state.input_payload);\nconst outputJson = JSON.stringify(outputPayload);\nconst query = `INSERT INTO executions (id, flow_type, status, input_payload, output_payload, request_hash, cache_hit, source_execution_id, duration_ms)\nVALUES (gen_random_uuid(), 'tests', 'success', '${sql(inputJson)}'::jsonb, '${sql(outputJson)}'::jsonb, '${sql(requestHash)}', true, '${sql(sourceExecutionId)}'::uuid, ${durationMs})\nRETURNING id::text AS execution_id, output_payload AS response, '${sql(requestHash)}' AS request_hash, '${sql(sourceExecutionId)}' AS source_execution_id, ${durationMs}::integer AS duration_ms, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { create_cache_hit_query: query } }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000007",
+      "name": "Prepare Cache Hit Persistence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_cache_hit_query }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000008",
+      "name": "Create Cache Hit Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1800,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst sourceExecutionId = String($json.source_execution_id);\nconst response = $json.response;\nconst durationMs = Number($json.duration_ms ?? 0);\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst inputPayload = JSON.stringify({ requestHash });\nconst outputPayload = JSON.stringify({ cacheHit: true, sourceExecutionId });\nconst responseJson = JSON.stringify(response);\nconst query = `WITH inserted AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ('${sql(executionId)}'::uuid, 'cache_lookup', 'cache', 'success', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs})\n  RETURNING execution_id\n)\nSELECT '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { record_cached_step_query: query } }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000009",
+      "name": "Prepare Cached Cache Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.record_cached_step_query }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000010",
+      "name": "Record Cached Cache Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2280,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json.response }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000011",
+      "name": "Respond Cached Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst requestHash = String($json.request_hash);\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst inputJson = JSON.stringify(state.input_payload);\nconst stateJson = JSON.stringify(state);\nconst query = `INSERT INTO executions (id, flow_type, status, input_payload, request_hash, cache_hit)\nVALUES (gen_random_uuid(), 'tests', 'pending', '${sql(inputJson)}'::jsonb, '${sql(requestHash)}', false)\nRETURNING id::text AS execution_id, request_hash, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { create_pending_query: query } }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000012",
+      "name": "Prepare Pending Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_pending_query }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000013",
+      "name": "Create Pending Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1800,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst durationMs = Math.max(0, Date.now() - Number(state.started_at_ms ?? Date.now()));\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst stateJson = JSON.stringify(state);\nconst inputPayload = JSON.stringify({ requestHash });\nconst outputPayload = JSON.stringify({ cacheHit: false });\nconst query = `WITH inserted AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ('${sql(executionId)}'::uuid, 'cache_lookup', 'cache', 'success', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs})\n  RETURNING execution_id\n)\nSELECT '${sql(executionId)}' AS execution_id, '${sql(requestHash)}' AS request_hash, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { record_cache_step_query: query } }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000014",
+      "name": "Prepare Cache Lookup Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.record_cache_step_query }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000015",
+      "name": "Record Cache Lookup Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2280,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst input = state.input_payload;\nconst executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst promptData = { agent: { role: 'Voce e um Engenheiro de Software Senior e SDET do sistema CPJ-Cobranca. Sua missao e gerar testes unitarios robustos, deterministicos e focados no dominio financeiro e juridico, garantindo cobertura de regras, limites e excecoes.', instructions: ['Responda somente JSON valido com framework, test_file, test_cases e coverage_hints.', 'Analise code e identifique funcoes, regras de negocio e caminhos de erro.', 'Gere testes executaveis usando o test_framework informado.', 'Foque cenarios reais de cobranca, valores limite, inputs negativos e cenarios de sucesso.', 'Para calculos financeiros em TypeScript ou JavaScript, prefira comparadores seguros como toBeCloseTo.', 'Inclua testes de excecao quando houver caminhos de erro.', 'Evite mocks desnecessarios em regras puras e use mocks adequados para banco ou APIs externas.'] } };\nconst exportPatterns = [{ kind: 'function', pattern: /^\\s*export\\s+(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'function', pattern: /^\\s*export\\s+default\\s+(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'class', pattern: /^\\s*export\\s+class\\s+([A-Za-z_$][\\w$]*)/ }, { kind: 'constant', pattern: /^\\s*export\\s+(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)/ }];\nconst branchPattern = /\\bif\\s*\\(([^)]+)\\)/g;\nconst thrownErrorPattern = /throw\\s+new\\s+Error\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]\\s*\\)/g;\nconst sideEffectPattern = /\\b([A-Za-z_$][\\w$]*\\.(?:save|create|update|delete|insert|post|get|put|patch|request|send))\\s*\\(/g;\nfunction extractBehaviorCandidates(code) { return code.split('\\n').flatMap((line, index) => { for (const { kind, pattern } of exportPatterns) { const match = pattern.exec(line); if (match?.[1]) return [{ name: match[1], kind, line_hint: `linha ${index + 1}`, reason: 'API publica exportada deve ter cobertura de comportamento.' }]; } return []; }); }\nfunction collectMatches(code, pattern, createFinding) { const findings = new Map(); for (const match of code.matchAll(pattern)) { const target = match[1]?.trim(); if (!target || findings.has(target)) continue; findings.set(target, createFinding(target)); } return [...findings.values()]; }\nconst behaviorCandidates = extractBehaviorCandidates(input.code);\nconst findings = [\n  ...collectMatches(input.code, branchPattern, (target) => ({ kind: 'branch_condition', target, confidence: 'medium', description: 'Condicao encontrada; gere testes para os caminhos verdadeiro e falso.' })),\n  ...collectMatches(input.code, thrownErrorPattern, (target) => ({ kind: 'thrown_error', target, confidence: 'medium', description: 'Erro lancado explicitamente; gere teste de falha esperado.' })),\n  ...collectMatches(input.code, sideEffectPattern, (target) => ({ kind: 'possible_side_effect', target, confidence: 'medium', description: 'Codigo sugere persistencia ou chamada externa; avalie mock ou spy.' })),\n];\nconst toolResult = { behaviorCandidates, findings };\nconst systemPrompt = `${promptData.agent.role}\\n\\nLinguagem: ${input.language}\\nFramework: ${input.test_framework}\\n\\nInstrucoes:\\n${promptData.agent.instructions.map((instruction) => `- ${instruction}`).join('\\n')}\\n\\nContrato de saida estruturada: responda somente JSON valido com este formato exato: {\"framework\":\"string\",\"test_file\":\"string\",\"test_cases\":[{\"name\":\"string\",\"type\":\"happy_path|edge_case|error_case\",\"description\":\"string\"}],\"coverage_hints\":[\"string\"]}. O test_file deve conter codigo-fonte executavel.`;\nconst userPrompt = JSON.stringify({ test_framework: input.test_framework, codigo: input.code, comportamentos_candidatos: behaviorCandidates, sinais_deterministicos: findings }, null, 2);\nreturn [{ json: { execution_id: executionId, request_hash: requestHash, request_state: state, language: input.language, test_framework: input.test_framework, tool_result: toolResult, tests_system_prompt: systemPrompt, tests_user_prompt: userPrompt } }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000016",
+      "name": "Tests Signal Extractor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.tests_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.tests_system_prompt }}"
+        }
+      },
+      "id": "44444444-4444-4444-8444-000000000017",
+      "name": "Tests Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2760,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $(\"Tests Signal Extractor\").first().json.request_state.model }}",
+        "options": {
+          "temperature": 0.1,
+          "maxRetries": 2,
+          "timeout": 120000
+        }
+      },
+      "id": "44444444-4444-4444-8444-000000000018",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        2760,
+        820
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Tests Signal Extractor').first().json;\nconst raw = $json.output ?? $json.text ?? $json.response ?? $json;\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction normalizeStringArray(value) { return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : []; }\nfunction normalizeCases(value) { return Array.isArray(value) ? value.map((item) => { const type = ['happy_path', 'edge_case', 'error_case'].includes(item?.type) ? item.type : 'edge_case'; return { name: String(item?.name ?? 'cenario gerado').trim() || 'cenario gerado', type, description: String(item?.description ?? '').trim() || 'Cenario sugerido pelo agente.' }; }) : []; }\nfunction normalizeTests(value) { return { framework: String(value.framework ?? context.test_framework).trim() || context.test_framework, test_file: String(value.test_file ?? '').trim() || '// O agente nao retornou um arquivo de testes executavel.\\n// Reexecute a geracao apos ajustar o prompt.', test_cases: normalizeCases(value.test_cases), coverage_hints: normalizeStringArray(value.coverage_hints) }; }\nfunction parseTestsOutput(value) { if (typeof value === 'object' && value !== null && !Array.isArray(value)) return normalizeTests(value); const text = cleanJsonText(value); try { return normalizeTests(JSON.parse(text)); } catch { return { framework: context.test_framework, test_file: '// O agente retornou conteudo fora do JSON estruturado esperado.\\n// Reexecute a geracao de testes apos ajustar o prompt/schema.', test_cases: [], coverage_hints: [text.slice(0, 500) || 'Saida invalida do agente de testes.'] }; } }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nfunction estimateTokens(value) { return Math.ceil(String(value ?? '').length / 4); }\nconst response = parseTestsOutput(raw);\nconst executionId = context.execution_id;\nconst durationMs = Math.max(0, Date.now() - Number(context.request_state.started_at_ms ?? Date.now()));\nconst responseJson = JSON.stringify(response);\nconst promptText = [context.tests_system_prompt, context.tests_user_prompt].join('\\n');\nconst completionText = JSON.stringify(response);\nconst promptTokens = estimateTokens(promptText);\nconst completionTokens = estimateTokens(completionText);\nconst totalTokens = promptTokens + completionTokens;\nconst inputCostUsd = Number(((promptTokens / 1000000) * 0.15).toFixed(8));\nconst outputCostUsd = Number(((completionTokens / 1000000) * 0.60).toFixed(8));\nconst costUsd = Number((inputCostUsd + outputCostUsd).toFixed(8));\nconst stepRows = [];\nfunction addStep(nodeName, kind, inputPayload, outputPayload) { stepRows.push(`('${sql(executionId)}'::uuid, '${sql(nodeName)}', '${sql(kind)}', 'success', '${sql(JSON.stringify(inputPayload ?? null))}'::jsonb, '${sql(JSON.stringify(outputPayload ?? null))}'::jsonb, 0)`); }\naddStep('tests_signal_extractor', 'tool', { language: context.language, test_framework: context.test_framework }, context.tool_result);\naddStep('tests_agent', 'llm', { behaviorCandidates: context.tool_result.behaviorCandidates, findings: context.tool_result.findings }, response);\nconst persistSuccessQuery = `WITH updated AS (\\n  UPDATE executions\\n  SET status = 'success', output_payload = '${sql(responseJson)}'::jsonb, duration_ms = ${durationMs}, error_message = NULL, updated_at = NOW()\\n  WHERE id = '${sql(executionId)}'::uuid\\n  RETURNING id\\n), inserted_steps AS (\\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\\n  VALUES ${stepRows.join(',\\n         ')}\\n  RETURNING execution_id\\n)\\nSELECT '${sql(responseJson)}'::jsonb AS response, '${sql(executionId)}' AS execution_id, ${durationMs}::integer AS duration_ms, ${promptTokens}::integer AS prompt_tokens, ${completionTokens}::integer AS completion_tokens, ${totalTokens}::integer AS total_tokens, ${costUsd}::numeric(12,8) AS cost_usd, ${inputCostUsd}::numeric(12,8) AS input_cost_usd, ${outputCostUsd}::numeric(12,8) AS output_cost_usd, '${sql(context.request_state.model)}' AS model_used;`;\nconst telemetryQuery = `INSERT INTO execution_telemetry (execution_id, provider, model_requested, model_used, prompt_tokens, completion_tokens, total_tokens, cost_usd, input_cost_usd, output_cost_usd, cache_read_tokens)\\nVALUES ('${sql(executionId)}'::uuid, 'openrouter', '${sql(context.request_state.model)}', '${sql(context.request_state.model)}', ${promptTokens}, ${completionTokens}, ${totalTokens}, ${costUsd}, ${inputCostUsd}, ${outputCostUsd}, NULL)\\nON CONFLICT (execution_id) DO UPDATE SET model_used = EXCLUDED.model_used, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, total_tokens = EXCLUDED.total_tokens, cost_usd = EXCLUDED.cost_usd, input_cost_usd = EXCLUDED.input_cost_usd, output_cost_usd = EXCLUDED.output_cost_usd, cache_read_tokens = EXCLUDED.cache_read_tokens\\nRETURNING '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { response, persist_success_query: persistSuccessQuery, telemetry_query: telemetryQuery } }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000019",
+      "name": "Normalize Tests Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.persist_success_query }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000020",
+      "name": "Persist Tests Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3240,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalized = $('Normalize Tests Output').first().json;\nif (!normalized?.telemetry_query) throw new Error('Telemetry query was not prepared.');\nreturn [{ json: normalized }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000021",
+      "name": "Restore Tests Telemetry Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3480,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.telemetry_query }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-000000000022",
+      "name": "Record Tests Telemetry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3720,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json.response }];"
+      },
+      "id": "44444444-4444-4444-8444-000000000023",
+      "name": "Respond Structured Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        580
+      ]
+    }
+  ],
+  "connections": {
+    "POST /api/v1/tests": {
+      "main": [
+        [
+          {
+            "node": "Prepare Tests Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Tests Request": {
+      "main": [
+        [
+          {
+            "node": "Ensure Tests Database Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Tests Database Schema": {
+      "main": [
+        [
+          {
+            "node": "Restore Prepared Tests Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Prepared Tests Request": {
+      "main": [
+        [
+          {
+            "node": "Cache Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Lookup": {
+      "main": [
+        [
+          {
+            "node": "Use Cached Tests?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Cached Tests?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cache Hit Persistence",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cache Hit Persistence": {
+      "main": [
+        [
+          {
+            "node": "Create Cache Hit Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Cache Hit Execution": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cached Cache Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cached Cache Step": {
+      "main": [
+        [
+          {
+            "node": "Record Cached Cache Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Cached Cache Step": {
+      "main": [
+        [
+          {
+            "node": "Respond Cached Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Create Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cache Lookup Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cache Lookup Step": {
+      "main": [
+        [
+          {
+            "node": "Record Cache Lookup Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Cache Lookup Step": {
+      "main": [
+        [
+          {
+            "node": "Tests Signal Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tests Signal Extractor": {
+      "main": [
+        [
+          {
+            "node": "Tests Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tests Agent": {
+      "main": [
+        [
+          {
+            "node": "Normalize Tests Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Tests Output": {
+      "main": [
+        [
+          {
+            "node": "Persist Tests Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Tests Success": {
+      "main": [
+        [
+          {
+            "node": "Restore Tests Telemetry Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Tests Telemetry Query": {
+      "main": [
+        [
+          {
+            "node": "Record Tests Telemetry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Tests Telemetry": {
+      "main": [
+        [
+          {
+            "node": "Respond Structured Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Tests Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "c127d103-ef38-4996-8112-testsflow"
+}

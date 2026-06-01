@@ -53,6 +53,19 @@
     },
     {
       "parameters": {
+        "jsCode": "const prepared = $('Prepare Review Request').first().json;\nif (!prepared?.cache_lookup_query) throw new Error('Cache lookup query was not prepared.');\nreturn [{ json: prepared }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000029",
+      "name": "Restore Prepared Review Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        610,
+        420
+      ]
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
         "query": "={{ $json.cache_lookup_query }}",
         "options": {}
@@ -62,7 +75,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        610,
+        740,
         420
       ],
       "credentials": {
@@ -350,7 +363,7 @@
     },
     {
       "parameters": {
-        "model": "={{ $(\"Language Router + Deterministic Tools\").item.json.request_state.model }}",
+        "model": "={{ $(\"Language Router + Deterministic Tools\").first().json.request_state.model }}",
         "options": {
           "temperature": 0.15,
           "maxRetries": 2,
@@ -388,7 +401,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const routed = $('Language Router + Deterministic Tools').item.json;\nconst items = $input.all();\nconst fallbackNames = ['naming_clarity', 'error_handling', 'resource_leak', 'complexity', 'security'];\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction parseAgentOutput(value, fallbackName) { const raw = value?.output ?? value?.text ?? value?.response ?? value; if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) return normalizeSpecialist(raw, fallbackName); const text = cleanJsonText(raw); try { return normalizeSpecialist(JSON.parse(text), fallbackName); } catch { return { agent_name: fallbackName, findings: [{ severity: 'medium', line_hint: null, description: 'O agente especialista retornou conteudo fora do JSON estruturado esperado.', suggestion: 'Reexecute o review ou ajuste o prompt/schema do especialista.' }], positives: [], summary: text.slice(0, 500) || 'Saida invalida do agente especialista.' }; } }\nfunction normalizeSpecialist(value, fallbackName) { return { agent_name: String(value.agent_name ?? fallbackName), findings: Array.isArray(value.findings) ? value.findings.map(normalizeFinding).filter(Boolean) : [], positives: Array.isArray(value.positives) ? value.positives.map(String).filter(Boolean) : [], summary: String(value.summary ?? 'Analise concluida.') }; }\nfunction normalizeFinding(value) { if (!value || typeof value !== 'object') return null; const severity = ['low', 'medium', 'high'].includes(value.severity) ? value.severity : 'medium'; const description = String(value.description ?? '').trim(); const suggestion = String(value.suggestion ?? '').trim(); if (!description || !suggestion) return null; return { severity, line_hint: value.line_hint == null ? null : String(value.line_hint), description, suggestion }; }\nconst agentOutputs = items.map((item, index) => parseAgentOutput(item.json, fallbackNames[index] ?? `specialist_${index + 1}`));\nconst input = routed.request_state.input_payload;\nconst aggregatorUserPrompt = JSON.stringify({ contexto_usuario: input.context ?? null, codigo: input.code, achados_deterministicos: routed.deterministic_findings, saidas_especialistas: agentOutputs }, null, 2);\nreturn [{ json: { ...routed, agent_outputs: agentOutputs, aggregator_user_prompt: aggregatorUserPrompt, aggregator_system_prompt: routed.system_prompts.aggregator } }];"
+        "jsCode": "const routed = $('Language Router + Deterministic Tools').first().json;\nconst items = $input.all();\nconst fallbackNames = ['naming_clarity', 'error_handling', 'resource_leak', 'complexity', 'security'];\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction parseAgentOutput(value, fallbackName) { const raw = value?.output ?? value?.text ?? value?.response ?? value; if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) return normalizeSpecialist(raw, fallbackName); const text = cleanJsonText(raw); try { return normalizeSpecialist(JSON.parse(text), fallbackName); } catch { return { agent_name: fallbackName, findings: [{ severity: 'medium', line_hint: null, description: 'O agente especialista retornou conteudo fora do JSON estruturado esperado.', suggestion: 'Reexecute o review ou ajuste o prompt/schema do especialista.' }], positives: [], summary: text.slice(0, 500) || 'Saida invalida do agente especialista.' }; } }\nfunction normalizeSpecialist(value, fallbackName) { return { agent_name: String(value.agent_name ?? fallbackName), findings: Array.isArray(value.findings) ? value.findings.map(normalizeFinding).filter(Boolean) : [], positives: Array.isArray(value.positives) ? value.positives.map(String).filter(Boolean) : [], summary: String(value.summary ?? 'Analise concluida.') }; }\nfunction normalizeFinding(value) { if (!value || typeof value !== 'object') return null; const severity = ['low', 'medium', 'high'].includes(value.severity) ? value.severity : 'medium'; const description = String(value.description ?? '').trim(); const suggestion = String(value.suggestion ?? '').trim(); if (!description || !suggestion) return null; return { severity, line_hint: value.line_hint == null ? null : String(value.line_hint), description, suggestion }; }\nconst agentOutputs = items.map((item, index) => parseAgentOutput(item.json, fallbackNames[index] ?? `specialist_${index + 1}`));\nconst input = routed.request_state.input_payload;\nconst aggregatorUserPrompt = JSON.stringify({ contexto_usuario: input.context ?? null, codigo: input.code, achados_deterministicos: routed.deterministic_findings, saidas_especialistas: agentOutputs }, null, 2);\nreturn [{ json: { ...routed, agent_outputs: agentOutputs, aggregator_user_prompt: aggregatorUserPrompt, aggregator_system_prompt: routed.system_prompts.aggregator } }];"
       },
       "id": "11111111-1111-4111-8111-000000000022",
       "name": "Build Aggregator Prompt",
@@ -418,7 +431,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const context = $('Build Aggregator Prompt').item.json;\nconst raw = $json.output ?? $json.text ?? $json.response ?? $json;\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction parseReviewOutput(value) { if (typeof value === 'object' && value !== null && !Array.isArray(value)) return normalizeReview(value); const text = cleanJsonText(value); try { return normalizeReview(JSON.parse(text)); } catch { return { overall_quality: 'needs_improvement', score: 5, issues: [{ severity: 'medium', line_hint: null, description: 'O agente agregador retornou conteudo fora do JSON estruturado esperado.', suggestion: 'Reexecute o review ou ajuste o prompt/schema do agregador.' }], positives: [], summary: text.slice(0, 500) || 'Saida invalida do agente agregador.' }; } }\nfunction normalizeReview(value) { const overallQuality = ['good', 'needs_improvement', 'critical'].includes(value.overall_quality) ? value.overall_quality : 'needs_improvement'; const scoreNumber = Number(value.score); return { overall_quality: overallQuality, score: Number.isInteger(scoreNumber) ? Math.max(0, Math.min(10, scoreNumber)) : 5, issues: Array.isArray(value.issues) ? value.issues.map(normalizeFinding).filter(Boolean) : [], positives: Array.isArray(value.positives) ? value.positives.map(String).filter(Boolean) : [], summary: String(value.summary ?? 'Review concluido.') }; }\nfunction normalizeFinding(value) { if (!value || typeof value !== 'object') return null; const severity = ['low', 'medium', 'high'].includes(value.severity) ? value.severity : 'medium'; const description = String(value.description ?? '').trim(); const suggestion = String(value.suggestion ?? '').trim(); if (!description || !suggestion) return null; return { severity, line_hint: value.line_hint == null ? null : String(value.line_hint), description, suggestion }; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nfunction estimateTokens(value) { return Math.ceil(String(value ?? '').length / 4); }\nconst response = parseReviewOutput(raw);\nconst executionId = context.execution_id;\nconst durationMs = Math.max(0, Date.now() - Number(context.request_state.started_at_ms ?? Date.now()));\nconst responseJson = JSON.stringify(response);\nconst promptText = [context.specialist_user_prompt, context.aggregator_user_prompt, ...Object.values(context.system_prompts)].join('\\n');\nconst completionText = JSON.stringify(context.agent_outputs) + '\\n' + JSON.stringify(response);\nconst promptTokens = estimateTokens(promptText);\nconst completionTokens = estimateTokens(completionText);\nconst totalTokens = promptTokens + completionTokens;\nconst inputCostUsd = Number(((promptTokens / 1000000) * 0.15).toFixed(8));\nconst outputCostUsd = Number(((completionTokens / 1000000) * 0.60).toFixed(8));\nconst costUsd = Number((inputCostUsd + outputCostUsd).toFixed(8));\nconst stepRows = [];\nfunction addStep(nodeName, kind, inputPayload, outputPayload) { stepRows.push(`('${sql(executionId)}'::uuid, '${sql(nodeName)}', '${sql(kind)}', 'success', '${sql(JSON.stringify(inputPayload ?? null))}'::jsonb, '${sql(JSON.stringify(outputPayload ?? null))}'::jsonb, 0)`); }\naddStep('language_router', 'system', { language: context.language }, { language: context.language, graphNode: context.graph_node });\naddStep('deterministic_tools', 'tool', { language: context.language, code: context.request_state.input_payload.code }, context.deterministic_findings);\nfor (const output of context.agent_outputs) addStep(`${output.agent_name}_agent`, 'llm', { language: context.language, deterministicFindings: context.deterministic_findings, agentOutputs: [] }, output);\naddStep('review_aggregator_agent', 'llm', { language: context.language, deterministicFindings: context.deterministic_findings, agentOutputs: context.agent_outputs }, response);\naddStep(context.graph_node, 'system', { language: context.language }, response);\nconst persistSuccessQuery = `WITH updated AS (\n  UPDATE executions\n  SET status = 'success', output_payload = '${sql(responseJson)}'::jsonb, duration_ms = ${durationMs}, error_message = NULL, updated_at = NOW()\n  WHERE id = '${sql(executionId)}'::uuid\n  RETURNING id\n), inserted_steps AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ${stepRows.join(',\\n         ')}\n  RETURNING execution_id\n)\nSELECT '${sql(responseJson)}'::jsonb AS response, '${sql(executionId)}' AS execution_id, ${durationMs}::integer AS duration_ms, ${promptTokens}::integer AS prompt_tokens, ${completionTokens}::integer AS completion_tokens, ${totalTokens}::integer AS total_tokens, ${costUsd}::numeric(12,8) AS cost_usd, ${inputCostUsd}::numeric(12,8) AS input_cost_usd, ${outputCostUsd}::numeric(12,8) AS output_cost_usd, '${sql(context.request_state.model)}' AS model_used;`;\nconst telemetryQuery = `INSERT INTO execution_telemetry (execution_id, provider, model_requested, model_used, prompt_tokens, completion_tokens, total_tokens, cost_usd, input_cost_usd, output_cost_usd, cache_read_tokens)\nVALUES ('${sql(executionId)}'::uuid, 'openrouter', '${sql(context.request_state.model)}', '${sql(context.request_state.model)}', ${promptTokens}, ${completionTokens}, ${totalTokens}, ${costUsd}, ${inputCostUsd}, ${outputCostUsd}, NULL)\nON CONFLICT (execution_id) DO UPDATE SET model_used = EXCLUDED.model_used, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, total_tokens = EXCLUDED.total_tokens, cost_usd = EXCLUDED.cost_usd, input_cost_usd = EXCLUDED.input_cost_usd, output_cost_usd = EXCLUDED.output_cost_usd, cache_read_tokens = EXCLUDED.cache_read_tokens\nRETURNING '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { response, persist_success_query: persistSuccessQuery, telemetry_query: telemetryQuery } }];"
+        "jsCode": "const context = $('Build Aggregator Prompt').first().json;\nconst raw = $json.output ?? $json.text ?? $json.response ?? $json;\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction parseReviewOutput(value) { if (typeof value === 'object' && value !== null && !Array.isArray(value)) return normalizeReview(value); const text = cleanJsonText(value); try { return normalizeReview(JSON.parse(text)); } catch { return { overall_quality: 'needs_improvement', score: 5, issues: [{ severity: 'medium', line_hint: null, description: 'O agente agregador retornou conteudo fora do JSON estruturado esperado.', suggestion: 'Reexecute o review ou ajuste o prompt/schema do agregador.' }], positives: [], summary: text.slice(0, 500) || 'Saida invalida do agente agregador.' }; } }\nfunction normalizeReview(value) { const overallQuality = ['good', 'needs_improvement', 'critical'].includes(value.overall_quality) ? value.overall_quality : 'needs_improvement'; const scoreNumber = Number(value.score); return { overall_quality: overallQuality, score: Number.isInteger(scoreNumber) ? Math.max(0, Math.min(10, scoreNumber)) : 5, issues: Array.isArray(value.issues) ? value.issues.map(normalizeFinding).filter(Boolean) : [], positives: Array.isArray(value.positives) ? value.positives.map(String).filter(Boolean) : [], summary: String(value.summary ?? 'Review concluido.') }; }\nfunction normalizeFinding(value) { if (!value || typeof value !== 'object') return null; const severity = ['low', 'medium', 'high'].includes(value.severity) ? value.severity : 'medium'; const description = String(value.description ?? '').trim(); const suggestion = String(value.suggestion ?? '').trim(); if (!description || !suggestion) return null; return { severity, line_hint: value.line_hint == null ? null : String(value.line_hint), description, suggestion }; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nfunction estimateTokens(value) { return Math.ceil(String(value ?? '').length / 4); }\nconst response = parseReviewOutput(raw);\nconst executionId = context.execution_id;\nconst durationMs = Math.max(0, Date.now() - Number(context.request_state.started_at_ms ?? Date.now()));\nconst responseJson = JSON.stringify(response);\nconst promptText = [context.specialist_user_prompt, context.aggregator_user_prompt, ...Object.values(context.system_prompts)].join('\\n');\nconst completionText = JSON.stringify(context.agent_outputs) + '\\n' + JSON.stringify(response);\nconst promptTokens = estimateTokens(promptText);\nconst completionTokens = estimateTokens(completionText);\nconst totalTokens = promptTokens + completionTokens;\nconst inputCostUsd = Number(((promptTokens / 1000000) * 0.15).toFixed(8));\nconst outputCostUsd = Number(((completionTokens / 1000000) * 0.60).toFixed(8));\nconst costUsd = Number((inputCostUsd + outputCostUsd).toFixed(8));\nconst stepRows = [];\nfunction addStep(nodeName, kind, inputPayload, outputPayload) { stepRows.push(`('${sql(executionId)}'::uuid, '${sql(nodeName)}', '${sql(kind)}', 'success', '${sql(JSON.stringify(inputPayload ?? null))}'::jsonb, '${sql(JSON.stringify(outputPayload ?? null))}'::jsonb, 0)`); }\naddStep('language_router', 'system', { language: context.language }, { language: context.language, graphNode: context.graph_node });\naddStep('deterministic_tools', 'tool', { language: context.language, code: context.request_state.input_payload.code }, context.deterministic_findings);\nfor (const output of context.agent_outputs) addStep(`${output.agent_name}_agent`, 'llm', { language: context.language, deterministicFindings: context.deterministic_findings, agentOutputs: [] }, output);\naddStep('review_aggregator_agent', 'llm', { language: context.language, deterministicFindings: context.deterministic_findings, agentOutputs: context.agent_outputs }, response);\naddStep(context.graph_node, 'system', { language: context.language }, response);\nconst persistSuccessQuery = `WITH updated AS (\n  UPDATE executions\n  SET status = 'success', output_payload = '${sql(responseJson)}'::jsonb, duration_ms = ${durationMs}, error_message = NULL, updated_at = NOW()\n  WHERE id = '${sql(executionId)}'::uuid\n  RETURNING id\n), inserted_steps AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ${stepRows.join(',\\n         ')}\n  RETURNING execution_id\n)\nSELECT '${sql(responseJson)}'::jsonb AS response, '${sql(executionId)}' AS execution_id, ${durationMs}::integer AS duration_ms, ${promptTokens}::integer AS prompt_tokens, ${completionTokens}::integer AS completion_tokens, ${totalTokens}::integer AS total_tokens, ${costUsd}::numeric(12,8) AS cost_usd, ${inputCostUsd}::numeric(12,8) AS input_cost_usd, ${outputCostUsd}::numeric(12,8) AS output_cost_usd, '${sql(context.request_state.model)}' AS model_used;`;\nconst telemetryQuery = `INSERT INTO execution_telemetry (execution_id, provider, model_requested, model_used, prompt_tokens, completion_tokens, total_tokens, cost_usd, input_cost_usd, output_cost_usd, cache_read_tokens)\nVALUES ('${sql(executionId)}'::uuid, 'openrouter', '${sql(context.request_state.model)}', '${sql(context.request_state.model)}', ${promptTokens}, ${completionTokens}, ${totalTokens}, ${costUsd}, ${inputCostUsd}, ${outputCostUsd}, NULL)\nON CONFLICT (execution_id) DO UPDATE SET model_used = EXCLUDED.model_used, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, total_tokens = EXCLUDED.total_tokens, cost_usd = EXCLUDED.cost_usd, input_cost_usd = EXCLUDED.input_cost_usd, output_cost_usd = EXCLUDED.output_cost_usd, cache_read_tokens = EXCLUDED.cache_read_tokens\nRETURNING '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { response, persist_success_query: persistSuccessQuery, telemetry_query: telemetryQuery } }];"
       },
       "id": "11111111-1111-4111-8111-000000000024",
       "name": "Normalize Aggregated Review",
@@ -451,6 +464,19 @@
     },
     {
       "parameters": {
+        "jsCode": "const normalized = $('Normalize Aggregated Review').first().json;\nif (!normalized?.telemetry_query) throw new Error('Telemetry query was not prepared.');\nreturn [{ json: normalized }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000030",
+      "name": "Restore Review Telemetry Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        500
+      ]
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
         "query": "={{ $json.telemetry_query }}",
         "options": {}
@@ -460,7 +486,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4000,
+        4260,
         500
       ],
       "credentials": {
@@ -478,7 +504,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4260,
+        4520,
         500
       ]
     }
@@ -757,6 +783,17 @@
       "main": [
         [
           {
+            "node": "Restore Review Telemetry Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Review Telemetry Query": {
+      "main": [
+        [
+          {
             "node": "Record Review Telemetry",
             "type": "main",
             "index": 0
@@ -812,6 +849,17 @@
       ]
     },
     "Ensure Review Database Schema": {
+      "main": [
+        [
+          {
+            "node": "Restore Prepared Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Prepared Review Request": {
       "main": [
         [
           {
