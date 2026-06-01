@@ -103,6 +103,14 @@ jobs:
             LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
             LANGCHAIN_CALLBACKS_BACKGROUND=true
             ENV
+            docker compose --env-file .env.production down --remove-orphans || true
+            for container_name in case-n8n-postgres-1 case-n8n-n8n-1; do
+              if docker ps -a --format '{{.Names}}' | grep -Fxq "${container_name}"; then
+                echo "Removing stale container ${container_name}"
+                docker rm -f "${container_name}" >/dev/null 2>&1 || true
+              fi
+            done
+
             docker compose --env-file .env.production pull || true
             docker compose --env-file .env.production up -d --remove-orphans
 
