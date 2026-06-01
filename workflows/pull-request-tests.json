@@ -1,0 +1,590 @@
+{
+  "name": "Pull Request Tests AI Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/v1/tests/pull-request",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000001",
+      "name": "POST /api/v1/tests/pull-request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        120,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body=$json.body??$json; const url=String(body.github_pull_request_url??'').trim(); const match=/^https:\\/\\/github\\.com\\/([^/]+)\\/([^/]+)\\/pull\\/(\\d+)\\/?$/.exec(url); if(!match) throw new Error('URL de pull request invalida.'); const framework=String(body.test_framework??'').trim(); if(!framework) throw new Error('O campo test_framework e obrigatorio.'); const input={github_pull_request_url:url,base_branch:String(body.base_branch??'main').trim()||'main',test_framework:framework}; if(Number.isInteger(body.prompt_version)&&body.prompt_version>0) input.prompt_version=body.prompt_version; if(typeof body.model==='string'&&body.model.trim()) input.model=body.model.trim(); const state={flow_type:'pull_request_tests',input_payload:input,model:input.model??'openai/gpt-4o-mini',owner:match[1],repo:match[2],number:Number(match[3]),started_at_ms:Date.now()}; function hash(text){let h=2166136261; for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)} return (h>>>0).toString(16).padStart(8,'0')} function sql(v){return String(v).replaceAll(\"'\",\"''\")} const requestHash=hash(JSON.stringify(input)); const q=`WITH cached AS (SELECT id,output_payload FROM executions WHERE flow_type='pull_request_tests' AND status='success' AND request_hash='${sql(requestHash)}' ORDER BY created_at DESC LIMIT 1) SELECT '${sql(requestHash)}' AS request_hash, EXISTS(SELECT 1 FROM cached) AS cache_hit, (SELECT id::text FROM cached) AS source_execution_id, (SELECT output_payload FROM cached) AS output_payload, '${sql(JSON.stringify(state))}'::jsonb AS request_state;`; return [{json:{request_state:state,cache_lookup_query:q}}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000002",
+      "name": "Prepare Pull Request Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS executions (\n id UUID PRIMARY KEY DEFAULT gen_random_uuid(), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), flow_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', input_payload JSONB NOT NULL, output_payload JSONB, duration_ms INTEGER NOT NULL DEFAULT 0, request_hash TEXT NOT NULL, cache_hit BOOLEAN NOT NULL DEFAULT FALSE, source_execution_id UUID REFERENCES executions (id), error_message TEXT\n);\nCREATE TABLE IF NOT EXISTS execution_steps (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), execution_id UUID NOT NULL REFERENCES executions (id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), node_name TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, input_payload JSONB, output_payload JSONB, duration_ms INTEGER NOT NULL DEFAULT 0, error_message TEXT);\nCREATE TABLE IF NOT EXISTS execution_telemetry (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), execution_id UUID NOT NULL UNIQUE REFERENCES executions (id) ON DELETE CASCADE, provider TEXT NOT NULL, model_requested TEXT NOT NULL, model_used TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, cost_usd NUMERIC(12,8), input_cost_usd NUMERIC(12,8), output_cost_usd NUMERIC(12,8), cache_read_tokens INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());\nSELECT true AS schema_ready;",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000003",
+      "name": "Ensure Pull Request Tests Schema",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared=$('Prepare Pull Request Tests').first().json; if(!prepared?.cache_lookup_query) throw new Error('Cache query ausente.'); return [{json:prepared}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000004",
+      "name": "Restore Prepared Pull Request Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.cache_lookup_query }}",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000005",
+      "name": "Cache Lookup",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1000,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.cache_hit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000006",
+      "name": "Use Cached Pull Request Tests?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:$json.output_payload}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000007",
+      "name": "Respond Cached Pull Request Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const s=$json.request_state; function sql(v){return String(v).replaceAll(\"'\",\"''\")} const q=`INSERT INTO executions(flow_type,status,input_payload,request_hash,cache_hit) VALUES('pull_request_tests','pending','${sql(JSON.stringify(s.input_payload))}'::jsonb,'${sql($json.request_hash)}',false) RETURNING id::text AS execution_id,'${sql(JSON.stringify(s))}'::jsonb AS request_state;`; return [{json:{create_pending_query:q}}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000008",
+      "name": "Prepare Pending Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_pending_query }}",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000009",
+      "name": "Create Pending Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1660,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ `https://api.github.com/repos/${$(\"Prepare Pull Request Tests\").first().json.request_state.owner}/${$(\"Prepare Pull Request Tests\").first().json.request_state.repo}/pulls/${$(\"Prepare Pull Request Tests\").first().json.request_state.number}` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000010",
+      "name": "Fetch GitHub Pull Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1880,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ `https://api.github.com/repos/${$(\"Prepare Pull Request Tests\").first().json.request_state.owner}/${$(\"Prepare Pull Request Tests\").first().json.request_state.repo}/pulls/${$(\"Prepare Pull Request Tests\").first().json.request_state.number}` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3.diff"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "77777777-7777-4777-8777-000000000011",
+      "name": "Fetch GitHub Diff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2100,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ `https://api.github.com/repos/${$(\"Prepare Pull Request Tests\").first().json.request_state.owner}/${$(\"Prepare Pull Request Tests\").first().json.request_state.repo}/pulls/${$(\"Prepare Pull Request Tests\").first().json.request_state.number}/files?per_page=100` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000012",
+      "name": "Fetch GitHub Changed Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2320,
+        620
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const pending=$('Create Pending Execution').first().json; const state=$('Prepare Pull Request Tests').first().json.request_state; const pr=$('Fetch GitHub Pull Request').first().json; const rawDiff=$('Fetch GitHub Diff').first().json; const rawFiles=$('Fetch GitHub Changed Files').first().json; const files=Array.isArray(rawFiles)?rawFiles:[]; const diff=typeof rawDiff==='string'?rawDiff:JSON.stringify(rawDiff); function language(path){const p=String(path).toLowerCase(); if(/\\.tsx?$/.test(p))return'typescript'; if(/\\.jsx?$/.test(p))return'javascript'; if(/\\.py$/.test(p))return'python'; if(/\\.php$/.test(p))return'php'; return null} const counts={}; for(const f of files){const l=language(f.filename); if(l)counts[l]=(counts[l]??0)+1} const primary=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0]??'typescript'; const candidates=[]; function add(name,kind,file,line,reason,snippet){if(candidates.length<24)candidates.push({name,kind,file_path:file,line_hint:`patch +${line}`,reason,snippet})} for(const f of files){for(const [i,line] of String(f.patch??'').split('\\n').entries()){if(!line.startsWith('+')||line.startsWith('+++'))continue; const code=line.slice(1).trim(); let m=/(?:export\\s+)?(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)/.exec(code)??/(?:export\\s+)?const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:async\\s*)?\\(/.exec(code); if(m){add(m[1],'function',f.filename,i+1,'Funcao alterada ou criada no PR; deve receber testes unitarios diretos.',code);continue} m=/(?:export\\s+)?class\\s+([A-Za-z_$][\\w$]*)/.exec(code); if(m){add(m[1],'class',f.filename,i+1,'Classe alterada ou criada no PR; cubra metodos publicos e invariantes.',code);continue} m=/\\bif\\s*\\(([^)]+)\\)/.exec(code); if(m){add(m[1],'branch',f.filename,i+1,'Condicao critica alterada; cubra caminhos verdadeiro e falso.',code);continue} m=/throw\\s+new\\s+([A-Za-z_$][\\w$]*)/.exec(code); if(m)add(m[1],'error_case',f.filename,i+1,'Erro explicito alterado; gere teste de falha esperada.',code)}} if(!candidates.length)for(const f of files.slice(0,24))candidates.push({name:f.filename,kind:'changed_file',file_path:f.filename,line_hint:null,reason:'Arquivo alterado sem funcao exportada clara; gere testes para o comportamento modificado.',snippet:f.patch??null}); const payload={request:state.input_payload,language:primary,pull_request:{owner:state.owner,repo:state.repo,number:state.number,title:pr.title??`Pull request #${state.number}`,base_branch:state.input_payload.base_branch,head_sha:pr.head?.sha??'',changed_files:pr.changed_files??files.length},diff:String(diff).slice(0,18000),changed_files:files.slice(0,25).map(f=>({filename:f.filename,status:f.status,patch:String(f.patch??'').slice(0,1400)})),project_context_files:[],critical_functions:candidates,truncation:{truncated:files.length>25||diff.length>18000,notes:[]}}; const prompt='Responda integralmente em portugues brasileiro. Mantenha apenas as chaves tecnicas do JSON no formato solicitado. Voce e um Engenheiro de Software Senior e SDET. Gere testes unitarios robustos, deterministicos e executaveis para as funcoes criticas alteradas. Priorize caminhos felizes, casos limite, validacoes e excecoes. Evite mocks desnecessarios e use mocks adequados para APIs externas ou banco de dados. Retorne exclusivamente JSON {framework,test_file,test_cases:[{name,type,description}],coverage_hints}. O campo test_file deve conter o codigo-fonte completo do arquivo de teste executavel como string, incluindo imports, describes, its e asserts. Nunca retorne apenas nome, caminho ou extensao de arquivo em test_file. Tipos permitidos em test_cases.type: happy_path, edge_case, error_case.'; return [{json:{execution_id:pending.execution_id,request_state:pending.request_state,analysis_payload:payload,agent_prompt:JSON.stringify(payload,null,2),system_prompt:prompt}}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000013",
+      "name": "Prepare Changed Code + Critical Functions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2540,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.agent_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.system_prompt }}"
+        }
+      },
+      "id": "77777777-7777-4777-8777-000000000014",
+      "name": "Pull Request Tests Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2760,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $(\"Prepare Pull Request Tests\").first().json.request_state.model }}",
+        "options": {
+          "temperature": 0.1,
+          "maxRetries": 2,
+          "timeout": 120000
+        }
+      },
+      "id": "77777777-7777-4777-8777-000000000015",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        2760,
+        840
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx=$('Prepare Changed Code + Critical Functions').first().json; const raw=$json.output??$json.text??$json.response??$json; let d; try{d=typeof raw==='object'?raw:JSON.parse(String(raw).replace(/^\\`\\`\\`json/i,'').replace(/\\`\\`\\`$/,'').trim())}catch{d={framework:ctx.request_state.input_payload.test_framework,test_file:'// O agente retornou uma saida invalida. Reexecute a geracao para obter um arquivo de testes completo.\\n'.repeat(2),test_cases:[],coverage_hints:['Reexecutar geracao: resposta fora do JSON esperado.']}} const testFile=String(d.test_file??'').trim(); const looksLikePath=/^[^\\\\\\n\\r]+\\.(?:test|spec)\\.[a-z0-9]+$/i.test(testFile)||/^[^\\\\\\n\\r]+\\.(?:tsx?|jsx?|py|php)$/i.test(testFile); if(testFile.length<80||looksLikePath) throw new Error('Resposta invalida do agente: test_file deve conter o codigo-fonte completo do teste executavel, nao apenas um caminho.'); const out={framework:String(d.framework??ctx.request_state.input_payload.test_framework),test_file:testFile,test_cases:Array.isArray(d.test_cases)?d.test_cases.map(t=>({name:String(t.name??'Caso de teste'),type:['happy_path','edge_case','error_case'].includes(t.type)?t.type:'edge_case',description:String(t.description??'Validar comportamento alterado.')})):[],coverage_hints:Array.isArray(d.coverage_hints)?d.coverage_hints.map(String):[]}; function sql(v){return String(v).replaceAll(\"'\",\"''\")} const response=JSON.stringify(out); const executionId=ctx.execution_id; const duration=Date.now()-ctx.request_state.started_at_ms; const persist=`UPDATE executions SET status='success',output_payload='${sql(response)}'::jsonb,duration_ms=${duration},updated_at=NOW() WHERE id='${sql(executionId)}'::uuid RETURNING '${sql(response)}'::jsonb AS response;`; const telemetry=`INSERT INTO execution_telemetry(execution_id,provider,model_requested,model_used) VALUES('${sql(executionId)}'::uuid,'openrouter','${sql(ctx.request_state.model)}','${sql(ctx.request_state.model)}') ON CONFLICT(execution_id) DO UPDATE SET model_used=EXCLUDED.model_used RETURNING '${sql(response)}'::jsonb AS response;`; return [{json:{response:out,persist_success_query:persist,telemetry_query:telemetry}}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000016",
+      "name": "Normalize Pull Request Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2980,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.persist_success_query }}",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000017",
+      "name": "Persist Pull Request Tests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3200,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const n=$('Normalize Pull Request Tests').first().json; if(!n?.telemetry_query) throw new Error('Telemetry query ausente.'); return [{json:n}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000018",
+      "name": "Restore Pull Request Tests Telemetry Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3420,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.telemetry_query }}",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-000000000019",
+      "name": "Record Pull Request Tests Telemetry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3640,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:$json.response}];"
+      },
+      "id": "77777777-7777-4777-8777-000000000020",
+      "name": "Respond Pull Request Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3860,
+        620
+      ]
+    }
+  ],
+  "connections": {
+    "POST /api/v1/tests/pull-request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Pull Request Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pull Request Tests": {
+      "main": [
+        [
+          {
+            "node": "Ensure Pull Request Tests Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Pull Request Tests Schema": {
+      "main": [
+        [
+          {
+            "node": "Restore Prepared Pull Request Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Prepared Pull Request Tests": {
+      "main": [
+        [
+          {
+            "node": "Cache Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Lookup": {
+      "main": [
+        [
+          {
+            "node": "Use Cached Pull Request Tests?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Cached Pull Request Tests?": {
+      "main": [
+        [
+          {
+            "node": "Respond Cached Pull Request Tests",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Create Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Fetch GitHub Pull Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GitHub Pull Request": {
+      "main": [
+        [
+          {
+            "node": "Fetch GitHub Diff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GitHub Diff": {
+      "main": [
+        [
+          {
+            "node": "Fetch GitHub Changed Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GitHub Changed Files": {
+      "main": [
+        [
+          {
+            "node": "Prepare Changed Code + Critical Functions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Changed Code + Critical Functions": {
+      "main": [
+        [
+          {
+            "node": "Pull Request Tests Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Request Tests Agent": {
+      "main": [
+        [
+          {
+            "node": "Normalize Pull Request Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Pull Request Tests": {
+      "main": [
+        [
+          {
+            "node": "Persist Pull Request Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Pull Request Tests": {
+      "main": [
+        [
+          {
+            "node": "Restore Pull Request Tests Telemetry Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Pull Request Tests Telemetry Query": {
+      "main": [
+        [
+          {
+            "node": "Record Pull Request Tests Telemetry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Pull Request Tests Telemetry": {
+      "main": [
+        [
+          {
+            "node": "Respond Pull Request Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Pull Request Tests Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "f1d6e6cd-40dd-48cd-b76c-pullrequesttests"
+}
