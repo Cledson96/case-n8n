@@ -1,0 +1,274 @@
+{
+  "name": "History Detail",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "api/v1/history/:id",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a3010000-0000-4000-8000-000000000001",
+      "name": "GET /api/v1/history/:id",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        120,
+        400
+      ],
+      "webhookId": "history-detail"
+    },
+    {
+      "parameters": {
+        "jsCode": "const id = String($json.params?.id ?? '').trim();\nconst uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst valid = uuidPattern.test(id);\nreturn [{ json: { valid, execution_id: valid ? id : null, response: valid ? null : { error: 'bad_request', message: 'Parametro de historico invalido.' } } }];"
+      },
+      "id": "a3010000-0000-4000-8000-000000000002",
+      "name": "Prepare History Detail Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a3010000-0000-4000-8000-000000000003",
+      "name": "Valid History UUID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT EXISTS(SELECT 1 FROM executions WHERE id = $1::uuid) AS found,\n       (\n         SELECT jsonb_build_object(\n           'id', e.id::text,\n           'type', e.flow_type,\n           'status', e.status,\n           'timestamp', to_char(e.created_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS') || '-03:00',\n           'duration_ms', e.duration_ms,\n           'cache_hit', e.cache_hit,\n           'source_execution_id', e.source_execution_id::text,\n           'telemetry', CASE WHEN t.execution_id IS NULL THEN NULL ELSE jsonb_build_object(\n             'provider', t.provider,\n             'model_requested', t.model_requested,\n             'model_used', t.model_used,\n             'openrouter_generation_id', NULL,\n             'prompt_tokens', t.prompt_tokens,\n             'completion_tokens', t.completion_tokens,\n             'total_tokens', t.total_tokens,\n             'cost_total_usd', t.cost_usd::float8,\n             'cost_input_usd', t.input_cost_usd::float8,\n             'cost_output_usd', t.output_cost_usd::float8,\n             'cache_read_tokens', t.cache_read_tokens\n           ) END,\n           'input_payload', e.input_payload,\n           'output_payload', e.output_payload,\n           'error_message', e.error_message,\n           'steps', COALESCE((\n             SELECT jsonb_agg(jsonb_build_object(\n               'id', s.id::text,\n               'timestamp', to_char(s.created_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS') || '-03:00',\n               'node_name', s.node_name,\n               'kind', s.kind,\n               'status', s.status,\n               'duration_ms', s.duration_ms,\n               'input_payload', s.input_payload,\n               'output_payload', s.output_payload,\n               'error_message', s.error_message\n             ) ORDER BY s.created_at ASC)\n             FROM execution_steps s\n             WHERE s.execution_id = e.id\n           ), '[]'::jsonb)\n         )\n         FROM executions e\n         LEFT JOIN execution_telemetry t ON t.execution_id = e.id\n         WHERE e.id = $1::uuid\n       ) AS response;",
+        "options": {
+          "queryReplacement": "={{ [ $json.execution_id ] }}"
+        }
+      },
+      "id": "a3010000-0000-4000-8000-000000000004",
+      "name": "Fetch History Detail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        800,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const found = $json.found === true;\nreturn [{ json: { found, response: found ? $json.response : { error: 'not_found', message: 'Execucao nao encontrada.' } } }];"
+      },
+      "id": "a3010000-0000-4000-8000-000000000005",
+      "name": "Format History Detail Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a3010000-0000-4000-8000-000000000006",
+      "name": "History Detail Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1260,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a3010000-0000-4000-8000-000000000007",
+      "name": "Respond History Detail",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1500,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "a3010000-0000-4000-8000-000000000008",
+      "name": "Respond History Detail Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1500,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "a3010000-0000-4000-8000-000000000009",
+      "name": "Respond Invalid History UUID",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        800,
+        540
+      ]
+    }
+  ],
+  "connections": {
+    "GET /api/v1/history/:id": {
+      "main": [
+        [
+          {
+            "node": "Prepare History Detail Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare History Detail Request": {
+      "main": [
+        [
+          {
+            "node": "Valid History UUID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid History UUID?": {
+      "main": [
+        [
+          {
+            "node": "Fetch History Detail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid History UUID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch History Detail": {
+      "main": [
+        [
+          {
+            "node": "Format History Detail Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format History Detail Response": {
+      "main": [
+        [
+          {
+            "node": "History Detail Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "History Detail Found?": {
+      "main": [
+        [
+          {
+            "node": "Respond History Detail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond History Detail Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "a3010000-0000-4000-8000-000000000010"
+}

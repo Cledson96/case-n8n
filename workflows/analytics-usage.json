@@ -1,0 +1,167 @@
+{
+  "name": "Analytics Usage - Faithful Aggregation Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "api/v1/analytics/usage",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "GET /api/v1/analytics/usage",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        320
+      ],
+      "webhookId": "analytics-usage"
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = $json.query ?? {};\nconst supportedFlows = new Set(['review', 'compliance', 'document', 'tests', 'batch', 'pull_request_review', 'pull_request_tests']);\nfunction optionalString(value, field) { if (value === undefined || value === null) return undefined; if (typeof value !== 'string' || !value.trim()) throw new Error(`Query invalida para analytics: ${field}.`); return value.trim(); }\nfunction optionalDate(value, field) { const text = optionalString(value, field); if (text === undefined) return undefined; if (Number.isNaN(Date.parse(value))) throw new Error(`Query invalida para analytics: ${field}.`); return new Date(text).toISOString(); }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst flowType = optionalString(query.flow_type, 'flow_type');\nif (flowType !== undefined && !supportedFlows.has(flowType)) throw new Error('Query invalida para analytics: flow_type.');\nconst model = optionalString(query.model, 'model');\nconst from = optionalDate(query.from, 'from');\nconst to = optionalDate(query.to, 'to');\nconst conditions = [];\nif (flowType !== undefined) conditions.push(`e.flow_type = '${sql(flowType)}'`);\nif (model !== undefined) conditions.push(`t.model_requested = '${sql(model)}'`);\nif (from !== undefined) conditions.push(`e.created_at >= '${sql(from)}'::timestamptz`);\nif (to !== undefined) conditions.push(`e.created_at <= '${sql(to)}'::timestamptz`);\nconst where = conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '';\nconst analyticsQuery = `WITH filtered AS (\n  SELECT e.id,\n         e.created_at,\n         e.flow_type,\n         e.status,\n         e.duration_ms,\n         e.cache_hit,\n         COALESCE(t.model_requested, 'unknown') AS model,\n         COALESCE(t.prompt_tokens, 0)::bigint AS prompt_tokens,\n         COALESCE(t.completion_tokens, 0)::bigint AS completion_tokens,\n         COALESCE(t.total_tokens, 0)::bigint AS total_tokens,\n         COALESCE(t.cache_read_tokens, 0)::bigint AS cache_read_tokens,\n         COALESCE(t.cost_usd, 0)::numeric AS cost_total_usd,\n         COALESCE(t.input_cost_usd, 0)::numeric AS cost_input_usd,\n         COALESCE(t.output_cost_usd, 0)::numeric AS cost_output_usd\n  FROM executions e\n  LEFT JOIN execution_telemetry t ON t.execution_id = e.id\n  WHERE 1 = 1${where}\n), totals AS (\n  SELECT COUNT(*)::integer AS executions,\n         COUNT(*) FILTER (WHERE status = 'success')::integer AS successful,\n         COUNT(*) FILTER (WHERE status = 'failed')::integer AS failed,\n         COUNT(*) FILTER (WHERE cache_hit)::integer AS cache_hits,\n         COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,\n         COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,\n         COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,\n         COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens,\n         ROUND(COALESCE(SUM(cost_total_usd), 0), 8) AS cost_total_usd,\n         ROUND(COALESCE(SUM(cost_input_usd), 0), 8) AS cost_input_usd,\n         ROUND(COALESCE(SUM(cost_output_usd), 0), 8) AS cost_output_usd,\n         COALESCE(ROUND(AVG(duration_ms)), 0)::integer AS average_duration_ms\n  FROM filtered\n), by_day_data AS (\n  SELECT (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS date,\n         COUNT(*)::integer AS executions,\n         COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,\n         ROUND(COALESCE(SUM(cost_total_usd), 0), 8) AS cost_total_usd\n  FROM filtered\n  GROUP BY 1\n  ORDER BY date\n), by_flow_data AS (\n  SELECT flow_type,\n         COUNT(*)::integer AS executions,\n         COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,\n         ROUND(COALESCE(SUM(cost_total_usd), 0), 8) AS cost_total_usd\n  FROM filtered\n  GROUP BY flow_type\n  ORDER BY flow_type\n), by_model_data AS (\n  SELECT model,\n         COUNT(*)::integer AS executions,\n         COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,\n         ROUND(COALESCE(SUM(cost_total_usd), 0), 8) AS cost_total_usd\n  FROM filtered\n  GROUP BY model\n  ORDER BY model\n)\nSELECT json_build_object(\n  'totals', (SELECT row_to_json(totals) FROM totals),\n  'by_day', COALESCE((SELECT json_agg(row_to_json(by_day_data) ORDER BY date) FROM by_day_data), '[]'::json),\n  'by_flow', COALESCE((SELECT json_agg(row_to_json(by_flow_data) ORDER BY flow_type) FROM by_flow_data), '[]'::json),\n  'by_model', COALESCE((SELECT json_agg(row_to_json(by_model_data) ORDER BY model) FROM by_model_data), '[]'::json)\n) AS response;`;\nreturn [{ json: { analytics_query: analyticsQuery } }];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Prepare Analytics Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS executions (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    flow_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    input_payload JSONB NOT NULL,\n    output_payload JSONB,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    request_hash TEXT NOT NULL,\n    cache_hit BOOLEAN NOT NULL DEFAULT FALSE,\n    source_execution_id UUID REFERENCES executions (id),\n    error_message TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_executions_created_at\n    ON executions (created_at DESC);\n\nCREATE INDEX IF NOT EXISTS idx_executions_flow_status\n    ON executions (flow_type, status);\n\nCREATE TABLE IF NOT EXISTS execution_telemetry (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    execution_id UUID NOT NULL UNIQUE REFERENCES executions (id) ON DELETE CASCADE,\n    provider TEXT NOT NULL,\n    model_requested TEXT NOT NULL,\n    model_used TEXT,\n    openrouter_generation_id TEXT,\n    prompt_tokens INTEGER,\n    completion_tokens INTEGER,\n    total_tokens INTEGER,\n    cost_usd NUMERIC(12, 8),\n    input_cost_usd NUMERIC(12, 8),\n    output_cost_usd NUMERIC(12, 8),\n    cache_read_tokens INTEGER,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n);\n\nSELECT true AS schema_ready;",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Ensure Analytics Schema",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        640,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Prepare Analytics Query').first().json;\nif (!prepared?.analytics_query) throw new Error('Analytics query was not prepared.');\nreturn [{ json: prepared }];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Restore Prepared Analytics Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.analytics_query }}",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Aggregate Analytics Usage",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1120,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = typeof $json.response === 'string' ? JSON.parse($json.response) : $json.response;\nif (!response?.totals || !Array.isArray(response.by_day) || !Array.isArray(response.by_flow) || !Array.isArray(response.by_model)) throw new Error('Resposta agregada de analytics invalida.');\nreturn [{ json: response }];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Respond Analytics Usage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "GET /api/v1/analytics/usage": {
+      "main": [
+        [
+          {
+            "node": "Prepare Analytics Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Analytics Query": {
+      "main": [
+        [
+          {
+            "node": "Ensure Analytics Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Analytics Schema": {
+      "main": [
+        [
+          {
+            "node": "Restore Prepared Analytics Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Prepared Analytics Query": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Analytics Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Analytics Usage": {
+      "main": [
+        [
+          {
+            "node": "Respond Analytics Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "a1000000-0000-4000-8000-000000000007"
+}

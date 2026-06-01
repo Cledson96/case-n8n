@@ -9,5 +9,8 @@ Recommended naming:
 - `compliance.json`
 - `document.json`
 - `tests.json`
+- `pull-request-review.json`
+- `pull-request-tests.json`
 - `history-list.json`
 - `history-detail.json`
+- `analytics-usage.json`

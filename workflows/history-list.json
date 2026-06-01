@@ -1,0 +1,113 @@
+{
+  "name": "History List API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "api/v1/history",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-000000000001",
+      "name": "GET /api/v1/history",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = $json.query ?? {};\nconst supportedFlowTypes = new Set(['review', 'compliance', 'document', 'tests', 'batch', 'pull_request_review', 'pull_request_tests']);\nconst supportedStatuses = new Set(['pending', 'success', 'failed']);\nfunction optionalText(value, field) { if (value === undefined || value === null) return null; const text = String(value).trim(); if (!text) throw new Error(`Query invalida para historico: ${field} nao pode ser vazio.`); return text; }\nfunction optionalDate(value, field) { const text = optionalText(value, field); if (text === null) return null; const timestamp = Date.parse(text); if (Number.isNaN(timestamp)) throw new Error(`Query invalida para historico: ${field} deve ser uma data valida.`); return new Date(timestamp).toISOString(); }\nfunction optionalBoolean(value) { if (value === undefined || value === null) return null; if (value === true || value === 'true') return true; if (value === false || value === 'false') return false; throw new Error('Query invalida para historico: cache_hit deve ser true ou false.'); }\nconst rawLimit = query.limit === undefined ? 20 : Number(query.limit);\nif (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) throw new Error('Query invalida para historico: limit deve ser um inteiro entre 1 e 100.');\nconst cursor = optionalText(query.cursor, 'cursor');\nconst flowType = optionalText(query.flow_type, 'flow_type');\nconst status = optionalText(query.status, 'status');\nconst model = optionalText(query.model, 'model');\nconst from = optionalDate(query.from, 'from');\nconst to = optionalDate(query.to, 'to');\nconst cacheHit = optionalBoolean(query.cache_hit);\nif (flowType !== null && !supportedFlowTypes.has(flowType)) throw new Error('Query invalida para historico: flow_type nao suportado.');\nif (status !== null && !supportedStatuses.has(status)) throw new Error('Query invalida para historico: status nao suportado.');\nreturn [{ json: { limit: rawLimit, query_parameters: [rawLimit + 1, cursor, flowType, status, model, from, to, cacheHit] } }];"
+      },
+      "id": "88888888-8888-4888-8888-000000000002",
+      "name": "Validate History List Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH cursor_execution AS (\n  SELECT id, created_at\n  FROM executions\n  WHERE id::text = $2::text\n), selected_executions AS (\n  SELECT e.id,\n         e.created_at,\n         e.flow_type,\n         e.status,\n         e.duration_ms,\n         e.cache_hit,\n         e.source_execution_id,\n         t.execution_id AS telemetry_execution_id,\n         t.provider,\n         t.model_requested,\n         t.model_used,\n         t.prompt_tokens,\n         t.completion_tokens,\n         t.total_tokens,\n         t.cost_usd,\n         t.input_cost_usd,\n         t.output_cost_usd,\n         t.cache_read_tokens\n  FROM executions e\n  LEFT JOIN execution_telemetry t ON t.execution_id = e.id\n  WHERE ($2::text IS NULL OR EXISTS (\n           SELECT 1\n           FROM cursor_execution cursor_row\n           WHERE e.created_at < cursor_row.created_at\n              OR (e.created_at = cursor_row.created_at AND e.id::text < cursor_row.id::text)\n        ))\n    AND ($3::text IS NULL OR e.flow_type = $3::text)\n    AND ($4::text IS NULL OR e.status = $4::text)\n    AND ($5::text IS NULL OR t.model_requested = $5::text)\n    AND ($6::timestamptz IS NULL OR e.created_at >= $6::timestamptz)\n    AND ($7::timestamptz IS NULL OR e.created_at <= $7::timestamptz)\n    AND ($8::boolean IS NULL OR e.cache_hit = $8::boolean)\n  ORDER BY e.created_at DESC, e.id DESC\n  LIMIT $1::integer\n), records AS (\n  SELECT e.id,\n         e.created_at,\n         jsonb_build_object(\n           'id', e.id::text,\n           'type', e.flow_type,\n           'status', e.status,\n           'timestamp', e.created_at,\n           'duration_ms', e.duration_ms,\n           'cache_hit', e.cache_hit,\n           'source_execution_id', e.source_execution_id::text,\n           'telemetry', CASE WHEN e.telemetry_execution_id IS NULL THEN NULL ELSE jsonb_build_object(\n             'provider', e.provider,\n             'model_requested', e.model_requested,\n             'model_used', e.model_used,\n             'openrouter_generation_id', NULL,\n             'prompt_tokens', e.prompt_tokens,\n             'completion_tokens', e.completion_tokens,\n             'total_tokens', e.total_tokens,\n             'cost_total_usd', e.cost_usd,\n             'cost_input_usd', e.input_cost_usd,\n             'cost_output_usd', e.output_cost_usd,\n             'cache_read_tokens', e.cache_read_tokens\n           ) END,\n           'steps', COALESCE((\n             SELECT jsonb_agg(jsonb_build_object(\n               'node_name', step.node_name,\n               'kind', step.kind,\n               'status', step.status,\n               'duration_ms', step.duration_ms\n             ) ORDER BY step.created_at ASC)\n             FROM execution_steps step\n             WHERE step.execution_id = e.id\n           ), '[]'::jsonb)\n         ) AS item\n  FROM selected_executions e\n)\nSELECT COALESCE(jsonb_agg(item ORDER BY created_at DESC, id DESC), '[]'::jsonb) AS items\nFROM records;",
+        "options": {
+          "queryReplacement": "={{ $json.query_parameters }}"
+        }
+      },
+      "id": "88888888-8888-4888-8888-000000000003",
+      "name": "Fetch History List",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        620,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $('Validate History List Query').first().json;\nconst rows = Array.isArray($json.items) ? $json.items : [];\nconst formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZoneName: 'longOffset' });\nfunction toSaoPauloIso(value) { const date = new Date(value); if (Number.isNaN(date.getTime())) return String(value); const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value])); return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${parts.timeZoneName.replace('GMT', '')}`; }\nconst items = rows.slice(0, request.limit).map((item) => ({ ...item, timestamp: toSaoPauloIso(item.timestamp) }));\nreturn [{ json: { items, page: { limit: request.limit, next_cursor: rows.length > request.limit && items.length > 0 ? items[items.length - 1].id : null } } }];"
+      },
+      "id": "88888888-8888-4888-8888-000000000004",
+      "name": "Respond History List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "GET /api/v1/history": {
+      "main": [
+        [
+          {
+            "node": "Validate History List Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate History List Query": {
+      "main": [
+        [
+          {
+            "node": "Fetch History List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch History List": {
+      "main": [
+        [
+          {
+            "node": "Respond History List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "88888888-8888-4888-8888-000000000005"
+}
