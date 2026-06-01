@@ -22,6 +22,7 @@ foreach ($node in $workflow.nodes) {
 $requiredNodes = @(
   "POST /api/v1/review",
   "Prepare Review Request",
+  "Ensure Review Database Schema",
   "Cache Lookup",
   "Use Cached Review?",
   "Create Pending Execution",
@@ -62,6 +63,7 @@ foreach ($agentNode in $agentNodes) {
 }
 
 $postgresNodes = @(
+  "Ensure Review Database Schema",
   "Cache Lookup",
   "Create Pending Execution",
   "Record Cache Lookup Step",
@@ -77,6 +79,7 @@ foreach ($postgresNode in $postgresNodes) {
 
 $connectionsJson = $workflow.connections | ConvertTo-Json -Depth 100
 $requiredConnectionMarkers = @(
+  "Ensure Review Database Schema",
   "Language Router + Deterministic Tools",
   "Naming Clarity Agent",
   "Error Handling Agent",
@@ -90,6 +93,38 @@ $requiredConnectionMarkers = @(
 $missingConnectionMarkers = @($requiredConnectionMarkers | Where-Object { $connectionsJson -notmatch [regex]::Escape($_) })
 if ($missingConnectionMarkers.Count -gt 0) {
   throw "Missing expected workflow connection markers: $($missingConnectionMarkers -join ', ')"
+}
+
+$workflowJson = $workflow | ConvertTo-Json -Depth 100
+$requiredCacheMarkers = @(
+  "function createPayloadHash(text)",
+  "const requestHash = createPayloadHash(normalizedPayloadText)"
+)
+
+$missingCacheMarkers = @($requiredCacheMarkers | Where-Object { $workflowJson -notmatch [regex]::Escape($_) })
+if ($missingCacheMarkers.Count -gt 0) {
+  throw "Missing cache lookup portability markers: $($missingCacheMarkers -join ', ')"
+}
+
+if ($workflowJson -match [regex]::Escape("digest(")) {
+  throw "Cache lookup must not depend on Postgres pgcrypto digest()."
+}
+
+$ensureSchemaNode = $workflow.nodes | Where-Object { $_.name -eq "Ensure Review Database Schema" } | Select-Object -First 1
+if (-not $ensureSchemaNode) {
+  throw "Missing Ensure Review Database Schema node."
+}
+
+$ensureSchemaQuery = $ensureSchemaNode.parameters.query
+$requiredSchemaMarkers = @(
+  "CREATE TABLE IF NOT EXISTS executions",
+  "CREATE TABLE IF NOT EXISTS execution_steps",
+  "CREATE TABLE IF NOT EXISTS execution_telemetry"
+)
+
+$missingSchemaMarkers = @($requiredSchemaMarkers | Where-Object { $ensureSchemaQuery -notmatch [regex]::Escape($_) })
+if ($missingSchemaMarkers.Count -gt 0) {
+  throw "Ensure Review Database Schema is missing SQL markers: $($missingSchemaMarkers -join ', ')"
 }
 
 $sql = Get-Content -Path $sqlPath -Raw

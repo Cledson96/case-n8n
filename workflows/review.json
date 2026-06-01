@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body ?? $json;\nconst supportedLanguages = ['typescript', 'javascript', 'python', 'php'];\nconst code = String(body.code ?? '').trim();\nconst language = String(body.language ?? '').trim().toLowerCase();\nconst context = typeof body.context === 'string' && body.context.trim() ? body.context.trim() : undefined;\nconst model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : 'openai/gpt-4o-mini';\nconst promptVersion = Number.isInteger(body.prompt_version) && body.prompt_version > 0 ? body.prompt_version : undefined;\nif (!code) throw new Error('O campo code e obrigatorio.');\nif (!supportedLanguages.includes(language)) throw new Error(`Linguagem nao suportada para review: ${language || '(vazia)'}.`);\nconst inputPayload = { code, language };\nif (context !== undefined) inputPayload.context = context;\nif (promptVersion !== undefined) inputPayload.prompt_version = promptVersion;\nif (body.model !== undefined) inputPayload.model = model;\nconst requestState = { flow_type: 'review', input_payload: inputPayload, model, started_at_ms: Date.now() };\nfunction normalizeForHash(value) { if (Array.isArray(value)) return value.map(normalizeForHash); if (value && typeof value === 'object') { const normalized = {}; for (const key of Object.keys(value).sort()) normalized[key] = normalizeForHash(value[key]); return normalized; } return value; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst normalizedPayloadText = JSON.stringify(normalizeForHash(inputPayload));\nconst stateJson = JSON.stringify(requestState);\nconst inputJson = JSON.stringify(inputPayload);\nconst cacheLookupQuery = `WITH request_data AS (\n  SELECT '${sql(inputJson)}'::jsonb AS input_payload,\n         '${sql(stateJson)}'::jsonb AS request_state,\n         '${sql(normalizedPayloadText)}'::text AS normalized_payload\n), computed_hash AS (\n  SELECT encode(digest(normalized_payload, 'sha256'), 'hex') AS request_hash\n  FROM request_data\n), cached AS (\n  SELECT id, output_payload\n  FROM executions\n  WHERE flow_type = 'review'\n    AND status = 'success'\n    AND request_hash = (SELECT request_hash FROM computed_hash)\n  ORDER BY created_at DESC\n  LIMIT 1\n)\nSELECT (SELECT request_hash FROM computed_hash) AS request_hash,\n       EXISTS(SELECT 1 FROM cached) AS cache_hit,\n       (SELECT id::text FROM cached) AS source_execution_id,\n       (SELECT output_payload FROM cached) AS output_payload,\n       (SELECT request_state FROM request_data) AS request_state;`;\nreturn [{ json: { request_state: requestState, cache_lookup_query: cacheLookupQuery } }];"
+        "jsCode": "const body = $json.body ?? $json;\nconst supportedLanguages = ['typescript', 'javascript', 'python', 'php'];\nconst code = String(body.code ?? '').trim();\nconst language = String(body.language ?? '').trim().toLowerCase();\nconst context = typeof body.context === 'string' && body.context.trim() ? body.context.trim() : undefined;\nconst model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : 'openai/gpt-4o-mini';\nconst promptVersion = Number.isInteger(body.prompt_version) && body.prompt_version > 0 ? body.prompt_version : undefined;\nif (!code) throw new Error('O campo code e obrigatorio.');\nif (!supportedLanguages.includes(language)) throw new Error(`Linguagem nao suportada para review: ${language || '(vazia)'}.`);\nconst inputPayload = { code, language };\nif (context !== undefined) inputPayload.context = context;\nif (promptVersion !== undefined) inputPayload.prompt_version = promptVersion;\nif (body.model !== undefined) inputPayload.model = model;\nconst requestState = { flow_type: 'review', input_payload: inputPayload, model, started_at_ms: Date.now() };\nfunction normalizeForHash(value) { if (Array.isArray(value)) return value.map(normalizeForHash); if (value && typeof value === 'object') { const normalized = {}; for (const key of Object.keys(value).sort()) normalized[key] = normalizeForHash(value[key]); return normalized; } return value; }\nfunction createPayloadHash(text) { let h1 = 0xdeadbeef ^ text.length; let h2 = 0x41c6ce57 ^ text.length; for (let index = 0; index < text.length; index += 1) { const ch = text.charCodeAt(index); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return `${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}`; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst normalizedPayloadText = JSON.stringify(normalizeForHash(inputPayload));\nconst requestHash = createPayloadHash(normalizedPayloadText);\nconst stateJson = JSON.stringify(requestState);\nconst inputJson = JSON.stringify(inputPayload);\nconst cacheLookupQuery = `WITH request_data AS (\n  SELECT '${sql(inputJson)}'::jsonb AS input_payload,\n         '${sql(stateJson)}'::jsonb AS request_state,\n         '${sql(requestHash)}'::text AS request_hash\n), cached AS (\n  SELECT id, output_payload\n  FROM executions\n  WHERE flow_type = 'review'\n    AND status = 'success'\n    AND request_hash = (SELECT request_hash FROM request_data)\n  ORDER BY created_at DESC\n  LIMIT 1\n)\nSELECT (SELECT request_hash FROM request_data) AS request_hash,\n       EXISTS(SELECT 1 FROM cached) AS cache_hit,\n       (SELECT id::text FROM cached) AS source_execution_id,\n       (SELECT output_payload FROM cached) AS output_payload,\n       (SELECT request_state FROM request_data) AS request_state;`;\nreturn [{ json: { request_state: requestState, cache_lookup_query: cacheLookupQuery } }];"
       },
       "id": "11111111-1111-4111-8111-000000000002",
       "name": "Prepare Review Request",
@@ -30,6 +30,26 @@
         360,
         420
       ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS executions (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    flow_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    input_payload JSONB NOT NULL,\n    output_payload JSONB,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    request_hash TEXT NOT NULL,\n    cache_hit BOOLEAN NOT NULL DEFAULT FALSE,\n    source_execution_id UUID REFERENCES executions (id),\n    error_message TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_executions_created_at\n    ON executions (created_at DESC);\n\nCREATE INDEX IF NOT EXISTS idx_executions_flow_status\n    ON executions (flow_type, status);\n\nCREATE INDEX IF NOT EXISTS idx_executions_flow_hash_status\n    ON executions (flow_type, request_hash, status);\n\nCREATE TABLE IF NOT EXISTS execution_steps (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    execution_id UUID NOT NULL REFERENCES executions (id) ON DELETE CASCADE,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    node_name TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    status TEXT NOT NULL,\n    input_payload JSONB,\n    output_payload JSONB,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    error_message TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_execution_steps_execution_created\n    ON execution_steps (execution_id, created_at);\n\nCREATE TABLE IF NOT EXISTS execution_telemetry (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    execution_id UUID NOT NULL UNIQUE REFERENCES executions (id) ON DELETE CASCADE,\n    provider TEXT NOT NULL,\n    model_requested TEXT NOT NULL,\n    model_used TEXT,\n    openrouter_generation_id TEXT,\n    prompt_tokens INTEGER,\n    completion_tokens INTEGER,\n    total_tokens INTEGER,\n    cost_usd NUMERIC(12, 8),\n    input_cost_usd NUMERIC(12, 8),\n    output_cost_usd NUMERIC(12, 8),\n    cache_read_tokens INTEGER,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n);\n\nSELECT true AS schema_ready;",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000028",
+      "name": "Ensure Review Database Schema",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        500,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
     },
     {
       "parameters": {
@@ -479,7 +499,7 @@
       "main": [
         [
           {
-            "node": "Cache Lookup",
+            "node": "Ensure Review Database Schema",
             "type": "main",
             "index": 0
           }
@@ -786,6 +806,17 @@
           {
             "node": "Review Aggregator Agent",
             "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Review Database Schema": {
+      "main": [
+        [
+          {
+            "node": "Cache Lookup",
+            "type": "main",
             "index": 0
           }
         ]
