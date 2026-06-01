@@ -1,5 +1,5 @@
 {
-  "name": "Professional Code Review AI Agents",
+  "name": "Professional Code Review AI Agents - Faithful Review Flow",
   "nodes": [
     {
       "parameters": {
@@ -8,78 +8,43 @@
         "responseMode": "lastNode",
         "options": {}
       },
-      "id": "2a2bd1df-91c4-4c55-b5d8-c7e2d0011001",
+      "id": "11111111-1111-4111-8111-000000000001",
       "name": "POST /api/v1/review",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [160, 300],
+      "position": [
+        120,
+        420
+      ],
       "webhookId": "code-review-ai-agent"
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body ?? {};\nconst code = String(body.code ?? '').trim();\nconst providedLanguage = String(body.language ?? '').trim().toLowerCase();\nconst context = String(body.context ?? 'Não informado').trim();\nconst model = String(body.model ?? 'openai/gpt-4o-mini').trim();\nconst startedAt = Date.now();\nfunction inferLanguage(input, source) {\n  if (input) return input;\n  if (/def\\s+\\w+\\(|import\\s+.+from\\s+|self\\.|pytest/.test(source)) return 'python';\n  if (/<\\?php|function\\s+\\w+\\(|->|namespace\\s+/.test(source)) return 'php';\n  if (/interface\\s+\\w+|type\\s+\\w+\\s*=|:\\s*(string|number|boolean)|implements\\s+/.test(source)) return 'typescript';\n  if (/function\\s+\\w+\\(|const\\s+|let\\s+|=>|module\\.exports/.test(source)) return 'javascript';\n  return 'generic';\n}\nconst language = inferLanguage(providedLanguage, code);\nconst agents = {\n  typescript: { name: 'typescript-review-agent', focus: 'TypeScript avançado, tipagem forte, async/await, arquitetura modular, segurança, testes Jest/Vitest e qualidade de API.' },\n  javascript: { name: 'javascript-review-agent', focus: 'JavaScript moderno, Node.js/browser, promises, closures, validação, segurança, performance e testes.' },\n  python: { name: 'python-review-agent', focus: 'Python, typing, PEP8, erros comuns, segurança, performance, pytest e organização de módulos.' },\n  php: { name: 'php-review-agent', focus: 'PHP moderno, PSR, Composer, segurança web, validação, performance e testes PHPUnit.' },\n  generic: { name: 'generic-review-agent', focus: 'Revisão geral de código, bugs, segurança, qualidade, performance, testes e manutenibilidade.' }\n};\nconst agent = agents[language] ?? agents.generic;\nconst validationErrors = [];\nif (!code) validationErrors.push({ field: 'code', message: 'O campo code é obrigatório.' });\nif (code.length > 60000) validationErrors.push({ field: 'code', message: 'O código enviado é grande demais para este endpoint.' });\nconst runId = `run_${Date.now()}_${Math.random().toString(16).slice(2)}`;\nconst schema = { score: 0, severity: 'low|medium|high|critical', summary: 'string', assessment: 'approve|needs_work|requires_changes', positive_observations: ['string'], findings: [{ severity: 'critical|warning|suggestion', category: 'functionality|security|quality|testing|performance|maintainability', message: 'string', recommendation: 'string' }], recommendations: ['string'], test_suggestions: ['string'], security_notes: ['string'], complexity_assessment: 'string' };\nconst systemPrompt = `Você é o ${agent.name}. Foco: ${agent.focus} Você deve atuar como AI Agent especialista de code review. Responda APENAS JSON válido, sem markdown fora do JSON, no schema: ${JSON.stringify(schema)}. Seja criterioso, profissional e objetivo em pt-BR. Use severidades: critical para falhas graves, warning para problemas relevantes, suggestion para melhorias. Atribua score de 0 a 100.`;\nconst userPrompt = validationErrors.length > 0 ? `Entrada inválida. Retorne JSON com assessment requires_changes e findings de validação: ${JSON.stringify(validationErrors)}` : `Contexto do projeto/case: ${context}\\nLinguagem detectada: ${language}\\n\\nCódigo para revisão:\\n\\`\\`\\`\\n${code}\\n\\`\\`\\``;\nreturn [{ json: { run_id: runId, started_at_ms: startedAt, code, language, context, model, specialist_agent: agent.name, system_prompt: systemPrompt, user_prompt: userPrompt, validation_errors: validationErrors } }];"
+        "jsCode": "const body = $json.body ?? $json;\nconst supportedLanguages = ['typescript', 'javascript', 'python', 'php'];\nconst code = String(body.code ?? '').trim();\nconst language = String(body.language ?? '').trim().toLowerCase();\nconst context = typeof body.context === 'string' && body.context.trim() ? body.context.trim() : undefined;\nconst model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : 'openai/gpt-4o-mini';\nconst promptVersion = Number.isInteger(body.prompt_version) && body.prompt_version > 0 ? body.prompt_version : undefined;\nif (!code) throw new Error('O campo code e obrigatorio.');\nif (!supportedLanguages.includes(language)) throw new Error(`Linguagem nao suportada para review: ${language || '(vazia)'}.`);\nconst inputPayload = { code, language };\nif (context !== undefined) inputPayload.context = context;\nif (promptVersion !== undefined) inputPayload.prompt_version = promptVersion;\nif (body.model !== undefined) inputPayload.model = model;\nconst requestState = { flow_type: 'review', input_payload: inputPayload, model, started_at_ms: Date.now() };\nfunction normalizeForHash(value) { if (Array.isArray(value)) return value.map(normalizeForHash); if (value && typeof value === 'object') { const normalized = {}; for (const key of Object.keys(value).sort()) normalized[key] = normalizeForHash(value[key]); return normalized; } return value; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst normalizedPayloadText = JSON.stringify(normalizeForHash(inputPayload));\nconst stateJson = JSON.stringify(requestState);\nconst inputJson = JSON.stringify(inputPayload);\nconst cacheLookupQuery = `WITH request_data AS (\n  SELECT '${sql(inputJson)}'::jsonb AS input_payload,\n         '${sql(stateJson)}'::jsonb AS request_state,\n         '${sql(normalizedPayloadText)}'::text AS normalized_payload\n), computed_hash AS (\n  SELECT encode(digest(normalized_payload, 'sha256'), 'hex') AS request_hash\n  FROM request_data\n), cached AS (\n  SELECT id, output_payload\n  FROM executions\n  WHERE flow_type = 'review'\n    AND status = 'success'\n    AND request_hash = (SELECT request_hash FROM computed_hash)\n  ORDER BY created_at DESC\n  LIMIT 1\n)\nSELECT (SELECT request_hash FROM computed_hash) AS request_hash,\n       EXISTS(SELECT 1 FROM cached) AS cache_hit,\n       (SELECT id::text FROM cached) AS source_execution_id,\n       (SELECT output_payload FROM cached) AS output_payload,\n       (SELECT request_state FROM request_data) AS request_state;`;\nreturn [{ json: { request_state: requestState, cache_lookup_query: cacheLookupQuery } }];"
       },
-      "id": "7a2f6b02-01ef-4b31-aad4-c7e2d0011002",
-      "name": "Validate Input + Route Specialist",
+      "id": "11111111-1111-4111-8111-000000000002",
+      "name": "Prepare Review Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [430, 300]
-    },
-    {
-      "parameters": {
-        "promptType": "define",
-        "text": "={{ $json.user_prompt }}",
-        "options": {
-          "systemMessage": "={{ $json.system_prompt }}"
-        }
-      },
-      "id": "a63aa7d7-dc64-4bd7-b6e3-c8e2d0011003",
-      "name": "Specialist Review AI Agent",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 3.1,
-      "position": [740, 300]
-    },
-    {
-      "parameters": {
-        "model": "openai/gpt-4o-mini",
-        "options": {
-          "temperature": 0.15,
-          "maxRetries": 2,
-          "timeout": 120000
-        }
-      },
-      "id": "2df04fc4-bd1a-4748-8be8-c8e2d0011004",
-      "name": "OpenRouter Chat Model",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
-      "typeVersion": 1,
-      "position": [740, 560],
-      "credentials": {
-        "openRouterApi": {
-          "name": "OpenRouter account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const request = $('Validate Input + Route Specialist').item.json;\nconst agentOutput = $json.output ?? $json.text ?? $json.response ?? JSON.stringify($json);\nlet structured;\ntry {\n  structured = typeof agentOutput === 'string' ? JSON.parse(agentOutput) : agentOutput;\n} catch (error) {\n  structured = { score: 0, severity: 'high', assessment: 'requires_changes', summary: 'O AI Agent retornou conteúdo fora do JSON estruturado esperado.', positive_observations: [], findings: [{ severity: 'warning', category: 'quality', message: String(agentOutput), recommendation: 'Ajustar o prompt/schema ou reexecutar a análise.' }], recommendations: ['Validar o formato de saída do agente.'], test_suggestions: [], security_notes: [], complexity_assessment: 'indisponível' };\n}\nconst durationMs = Math.max(0, Date.now() - request.started_at_ms);\nconst promptTokensEstimate = Math.ceil((request.system_prompt.length + request.user_prompt.length) / 4);\nconst completionTokensEstimate = Math.ceil(String(agentOutput).length / 4);\nconst totalTokensEstimate = promptTokensEstimate + completionTokensEstimate;\nconst estimatedCostUsd = Number((((promptTokensEstimate / 1000000) * 0.15) + ((completionTokensEstimate / 1000000) * 0.60)).toFixed(8));\nconst response = { data: { flow_type: 'review', status: 'completed', language: request.language, specialist: request.specialist_agent, model_used: request.model, score: structured.score ?? null, severity: structured.severity ?? 'unknown', assessment: structured.assessment ?? 'needs_work', summary: structured.summary ?? '', positive_observations: structured.positive_observations ?? [], findings: structured.findings ?? [], recommendations: structured.recommendations ?? [], test_suggestions: structured.test_suggestions ?? [], security_notes: structured.security_notes ?? [], complexity_assessment: structured.complexity_assessment ?? null }, metrics: { duration_ms: durationMs, prompt_tokens_estimate: promptTokensEstimate, completion_tokens_estimate: completionTokensEstimate, total_tokens_estimate: totalTokensEstimate, estimated_cost_usd: estimatedCostUsd }, observability: { langsmith_required: true, langsmith_project: 'case-n8n', tracing_env: 'LANGCHAIN_TRACING_V2=true' }, meta: { run_id: request.run_id, timestamp: new Date().toISOString() } };\nfunction sql(value) { return String(value).replaceAll(String.fromCharCode(39), String.fromCharCode(39) + String.fromCharCode(39)); }\nconst inputPayload = JSON.stringify({ language: request.language, context: request.context, code: request.code });\nconst outputPayload = JSON.stringify(response);\nconst dbQuery = `INSERT INTO agent_runs (id, flow_type, status, input_payload, output_payload, duration_ms, model_used) VALUES (gen_random_uuid(), 'review', 'completed', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs}, '${sql(response.data.model_used)}');`;\nreturn [{ json: { response, db_query: dbQuery } }];"
-      },
-      "id": "df01de66-a7bb-4d75-a858-c8e2d0011005",
-      "name": "Normalize Agent Output + Metrics",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1050, 300]
+      "position": [
+        360,
+        420
+      ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "={{ $json.db_query }}",
+        "query": "={{ $json.cache_lookup_query }}",
         "options": {}
       },
-      "id": "b34d83a6-c9ff-42ed-9b83-c8e2d0011006",
-      "name": "Save Metrics to Postgres",
+      "id": "11111111-1111-4111-8111-000000000003",
+      "name": "Cache Lookup",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [1330, 300],
+      "position": [
+        610,
+        420
+      ],
       "credentials": {
         "postgres": {
           "name": "case-n8n Postgres"
@@ -88,40 +53,752 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $('Normalize Agent Output + Metrics').item.json.response;\nreturn [{ json: response }];"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cache-hit-condition",
+              "leftValue": "={{ $json.cache_hit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
-      "id": "ca368584-3a67-4eca-9dc0-c8e2d0011007",
+      "id": "11111111-1111-4111-8111-000000000004",
+      "name": "Use Cached Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        860,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst requestHash = String($json.request_hash);\nconst sourceExecutionId = String($json.source_execution_id);\nconst outputPayload = $json.output_payload;\nconst durationMs = Math.max(0, Date.now() - Number(state.started_at_ms ?? Date.now()));\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst stateJson = JSON.stringify(state);\nconst inputJson = JSON.stringify(state.input_payload);\nconst outputJson = JSON.stringify(outputPayload);\nconst query = `INSERT INTO executions (id, flow_type, status, input_payload, output_payload, request_hash, cache_hit, source_execution_id, duration_ms)\nVALUES (gen_random_uuid(), 'review', 'success', '${sql(inputJson)}'::jsonb, '${sql(outputJson)}'::jsonb, '${sql(requestHash)}', true, '${sql(sourceExecutionId)}'::uuid, ${durationMs})\nRETURNING id::text AS execution_id, output_payload AS response, '${sql(requestHash)}' AS request_hash, '${sql(sourceExecutionId)}' AS source_execution_id, ${durationMs}::integer AS duration_ms, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { create_cache_hit_query: query } }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000005",
+      "name": "Prepare Cache Hit Persistence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1110,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_cache_hit_query }}",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000006",
+      "name": "Create Cache Hit Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1360,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst sourceExecutionId = String($json.source_execution_id);\nconst response = $json.response;\nconst durationMs = Number($json.duration_ms ?? 0);\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst inputPayload = JSON.stringify({ requestHash });\nconst outputPayload = JSON.stringify({ cacheHit: true, sourceExecutionId });\nconst responseJson = JSON.stringify(response);\nconst query = `WITH inserted AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ('${sql(executionId)}'::uuid, 'cache_lookup', 'cache', 'success', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs})\n  RETURNING execution_id\n)\nSELECT '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { record_cached_step_query: query } }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000007",
+      "name": "Prepare Cached Cache Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1610,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.record_cached_step_query }}",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000008",
+      "name": "Record Cached Cache Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1860,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json.response }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000009",
+      "name": "Respond Cached Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2110,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst requestHash = String($json.request_hash);\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst inputJson = JSON.stringify(state.input_payload);\nconst stateJson = JSON.stringify(state);\nconst query = `INSERT INTO executions (id, flow_type, status, input_payload, request_hash, cache_hit)\nVALUES (gen_random_uuid(), 'review', 'pending', '${sql(inputJson)}'::jsonb, '${sql(requestHash)}', false)\nRETURNING id::text AS execution_id, request_hash, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { create_pending_query: query } }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000010",
+      "name": "Prepare Pending Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1110,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.create_pending_query }}",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000011",
+      "name": "Create Pending Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1360,
+        560
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json.request_state;\nconst executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst durationMs = Math.max(0, Date.now() - Number(state.started_at_ms ?? Date.now()));\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nconst stateJson = JSON.stringify(state);\nconst inputPayload = JSON.stringify({ requestHash });\nconst outputPayload = JSON.stringify({ cacheHit: false });\nconst query = `WITH inserted AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ('${sql(executionId)}'::uuid, 'cache_lookup', 'cache', 'success', '${sql(inputPayload)}'::jsonb, '${sql(outputPayload)}'::jsonb, ${durationMs})\n  RETURNING execution_id\n)\nSELECT '${sql(executionId)}' AS execution_id, '${sql(requestHash)}' AS request_hash, '${sql(stateJson)}'::jsonb AS request_state;`;\nreturn [{ json: { record_cache_step_query: query } }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000012",
+      "name": "Prepare Cache Lookup Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1610,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.record_cache_step_query }}",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000013",
+      "name": "Record Cache Lookup Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1860,
+        560
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const promptData = {\"specialists\":{\"naming_clarity\":{\"role\":\"Voce e um agente senior especialista em clareza de nomenclatura e Domain-Driven Design (DDD) para o sistema CPJ-Cobranca. Sua missao e encontrar nomes que dificultam entendimento, escondem regra de negocio ou induzem uso incorreto no contexto de recuperacao de credito, sem gerar falsos positivos.\",\"instructions\":[\"Responda somente no schema estruturado solicitado: agent_name, findings, positives e summary.\",\"Analise funcoes, classes, variaveis, parametros, tipos, arquivos, modulos, endpoints, eventos, DTOs e contratos publicos.\",\"Avalie nomes pelo contexto do dominio financeiro/juridico (ex: devedor, divida, parcela, acordo, taxa, carteira), responsabilidade real, escopo, tipo de dado, efeito colateral e comportamento observavel.\",\"Reporte somente quando o nome causar ambiguidade concreta, esconder regra importante, contradizer o comportamento, dificultar testes/manutencao ou puder induzir bug.\",\"Nao reporte preferencia subjetiva, sinonimo equivalente, abreviacao comum da linguagem/framework, nome curto em escopo pequeno ou convencao idiomatica conhecida.\",\"Nao reporte nome em portugues, falta de prefixo/sufixo async, ou id em escopo pequeno como problema por si so.\",\"Antes de reportar, compare o nome com o uso real no codigo; se o nome parece generico mas o contexto e pequeno e claro, trate como aceitavel.\",\"Use severity high apenas quando o nome puder levar a chamada errada, regra invertida, autorizacao incorreta, persistencia indevida, cobranca errada ou outro bug real.\",\"Use severity medium quando o nome ocultar conceito de dominio, responsabilidade, unidade de medida, estado ou efeito colateral relevante.\",\"Use severity low para melhorias locais de leitura que nao mudam entendimento funcional, e evite muitos lows.\",\"Em suggestion, proponha nome(s) concretos alinhados ao vocabulario de recuperacao de credito e explique rapidamente por que comunicam melhor a intencao; nao diga apenas 'renomeie'.\",\"Se houver informacao insuficiente para sugerir um nome seguro, diga qual conceito deve aparecer no nome em vez de inventar dominio.\",\"Use line_hint com 'linha N' quando a evidencia vier do codigo numerado ou null quando nao houver linha clara.\",\"Inclua positives para nomes que expressem bem o dominio da cobranca, acao, estado, unidade, boundary ou contrato publico.\",\"O summary deve ser curto e dizer se a nomenclatura esta clara, parcialmente ambigua ou arriscada para o dominio.\"],\"examples\":[{\"title\":\"Nome generico que esconde comportamento\",\"input\":\"async function process(data) { const active = data.filter((x) => x.status === 'ACTIVE'); return billing.charge(active); }\",\"expected\":\"Reporte process/data/x porque a funcao filtra clientes ativos e dispara cobranca. Sugira nomes como chargeActiveDebtors, devedores ou activeDebts. Explique que o nome atual esconde efeito colateral financeiro. Severity medium ou high se o contexto indicar risco de cobranca indevida.\"},{\"title\":\"Nome contradiz regra de negocio\",\"input\":\"function canCancel(invoice) { return invoice.status === 'PAID'; }\",\"expected\":\"Reporte que canCancel contradiz o comportamento se faturas pagas nao deveriam ser cancelaveis ou se a regra esperada for outra. A sugestao deve pedir nome ou condicao alinhados, por exemplo isPaidInvoice ou ajustar a regra para status cancelavel. Severity high se puder permitir cancelamento indevido.\"},{\"title\":\"Unidade de medida ausente em contexto financeiro/tempo\",\"input\":\"const timeout = 30; setTimeout(run, timeout);\",\"expected\":\"Reporte timeout quando a unidade nao estiver clara e puder causar erro. Sugira timeoutMs ou timeoutSeconds e alinhar o valor ao contrato da API usada. Severity medium se houver risco operacional; low se for apenas leitura local.\"},{\"title\":\"Falso positivo por escopo pequeno\",\"input\":\"const id = request.params.devedorId; return repository.findById(id);\",\"expected\":\"Nao reporte id: e convencao comum, escopo pequeno e significado evidente. Pode citar como positivo se o codigo mantiver nomes simples e idiomaticos.\"},{\"title\":\"Falso positivo por callback idiomatico\",\"input\":\"dividas.map((divida) => divida.valor);\",\"expected\":\"Nao critique divida nem map. O nome e suficiente para o escopo e respeita o dominio e o padrao idiomatico.\"}]},\"error_handling\":{\"role\":\"Voce e um agente senior especialista em tratamento de erros e resiliencia para o sistema CPJ-Cobranca. Sua missao e encontrar falhas que possam virar erro silencioso, estado inconsistente em dados financeiros/juridicos, resposta incorreta ou perda de diagnostico, sem exigir try/catch desnecessario.\",\"instructions\":[\"Responda somente no schema estruturado solicitado: agent_name, findings, positives e summary.\",\"Analise promises, async/await, callbacks, validacoes, parse de entrada, chamadas externas (como bureaus de credito), banco de dados, filesystem, filas, transacoes, middlewares e boundaries de API.\",\"Diferencie erro tratado localmente, erro propagado intencionalmente para caller/framework e erro realmente perdido.\",\"Nao recomende try/catch generico quando return/await propaga corretamente para middleware, job runner, framework ou camada superior com contrato claro.\",\"Reporte promise esquecida apenas quando uma chamada assincrona puder falhar depois do fluxo seguir e nao houver await, return, void intencional com tratamento, ou agregacao explicita.\",\"Em operacoes criticas de banco de dados (como UPDATE de dividas ou INSERT de historico), reporte falhas em validar se a operacao realmente afetou linhas, previnindo que o sistema assuma sucesso em atualizacoes vazias ou falhas de conexao nao capturadas.\",\"Reporte catch vazio, catch que troca erro por sucesso silencioso, perda de stack/contexto, throw de string, mascaramento indevido, parse inseguro e rollback ausente quando houver estado parcial.\",\"Verifique se mensagens de erro preservam contexto tecnico suficiente sem expor segredo, token, senha, CPF, CNPJ, dados de devedores, Authorization, cookie ou payload sensivel do dominio.\",\"Use severity high para erro que pode retornar sucesso falso em cobranca, corromper dados de acordos, deixar transacao financeira parcial, derrubar processo ou ocultar falha critica de integracao/auditoria.\",\"Use severity medium para perda de diagnostico, validacao incompleta, retry sem criterio ou fluxo que depende de comportamento implicito fragil.\",\"Use severity low para melhoria de clareza de erro sem risco funcional relevante, e evite muitos lows.\",\"Em suggestion, indique a correcao concreta: validar affectRows, adicionar await/return, relancar com cause, usar erro tipado, rollback/finally, ou delegar explicitamente ao middleware.\",\"Nao diga que uma promise nao foi retornada quando houver return; por exemplo, return db.query(sql) devolve a promise para o caller e nao deve ser marcado como esquecimento.\",\"Sem tratamento local nao e issue quando a promise foi retornada, aguardada ou delegada para middleware/caller com contrato claro.\",\"Use line_hint com 'linha N' quando a evidencia vier do codigo numerado ou null quando nao houver linha clara.\",\"Inclua positives quando houver propagacao clara, validacao antecipada, erro tipado, uso correto de cause, rollback/finally ou boundary de erro bem definido.\",\"O summary deve dizer se o fluxo de erro e resiliente, parcialmente fragil ou propenso a falhas silenciosas no dominio de cobranca.\"],\"examples\":[{\"title\":\"Falso sucesso em atualizacao critica\",\"input\":\"await db.query(`UPDATE dividas SET ultima_oferta = ${valor} WHERE id = '${id}'`); return valor;\",\"expected\":\"Reporte que a execucao assume sucesso absoluto sem verificar se alguma linha foi afetada ou se a query falhou silenciosamente. Sugira validar o retorno do banco (ex: affectedRows) ou garantir que a camada superior intercepte a falha da promise, pois falhas de conexao gerarao retorno falso positivo. Severity high devido ao impacto financeiro.\"},{\"title\":\"Promise esquecida com risco de perda de historico\",\"input\":\"async function registrarContato(dados) { repository.insert(dados); return { ok: true }; }\",\"expected\":\"Reporte que repository.insert nao e aguardado nem retornado; a funcao responde sucesso antes da persistencia, arriscando perda de dados de auditoria/historico. Sugira await repository.insert() ou return da promise. Severity high se o historico for obrigatorio para compliance (ex: BACEN).\"},{\"title\":\"Catch que perde causa e oculta erro de integracao\",\"input\":\"try { await bureau.consultar(cpf); } catch (error) { throw new Error('Falha na consulta'); }\",\"expected\":\"Reporte perda de stack/cause e contexto tecnico do bureau. Sugira throw new Error('Falha na consulta', { cause: error }) ou erro tipado, sem logar o CPF no erro. Severity medium.\"},{\"title\":\"Exemplo de falso positivo em query retornada\",\"input\":\"function buscarDivida(sql) { return db.query(sql); }\",\"expected\":\"Nao reporte falta de try/catch nem promise esquecida. O 'return db.query(sql)' devolve a promise para o caller tratar. Pode citar como positivo se a propagacao for intencional para um middleware.\"},{\"title\":\"Catch vazio mascarando falha\",\"input\":\"try { await audit.log(event); } catch (_) {} return { ok: true };\",\"expected\":\"Reporte falha silenciosa: o erro de auditoria some. Sugira tratar explicitamente, relancar quando a auditoria for obrigatoria no fluxo de cobranca, ou documentar fallback. Severity conforme criticidade do log.\"}]},\"resource_leak\":{\"role\":\"Voce e um agente senior especialista em vazamento de recursos para o sistema CPJ-Cobranca. Sua missao e encontrar recursos (conexoes de banco, streams de arquivos de remessa/retorno, locks de banco) que podem ficar abertos, acumulados ou inconsistentes em sucesso, erro, cancelamento ou alto volume, sem confundir singletons de infraestrutura com vazamento.\",\"instructions\":[\"Responda somente no schema estruturado solicitado: agent_name, findings, positives e summary.\",\"Analise processamento de arquivos (remessa/retorno bancario), streams, conexoes, pools de banco de dados, cursores, transacoes financeiras, locks de linha/tabela, timers, intervals, listeners, sockets e workers.\",\"Considere o ciclo de vida do recurso no contexto de cobranca: por requisicao da API, por job de processamento em lote, por retry em integracoes, ou por modulo singleton.\",\"Nao reporte como vazamento um client/pool singleton criado uma vez para durar todo o processo, a menos que o codigo crie repetidamente ou nao tenha shutdown quando necessario.\",\"Reporte quando cleanup nao acontece em caminho de erro, early return, timeout, cancelamento, excecao, retry, loop de processamento de carteira ou quando listeners/timers sao registrados sem remocao.\",\"Verifique rigorosamente se transacoes de banco de dados em tabelas de dividas, devedores ou acordos fazem commit/rollback em todos os caminhos possiveis para evitar table/row locks eternos.\",\"Use severity high para vazamento por request/job/loop que pode esgotar conexoes do pool, prender arquivos de remessa na memoria, ou deixar transacao financeira aberta bloqueando outras operacoes.\",\"Use severity medium para cleanup ausente em caminhos de erro menos frequentes, listeners acumulaveis ou shutdown incompleto de recursos externos (ex: clientes de FTP de bureaus).\",\"Use severity low para melhoria de robustez quando o risco de esgotamento for baixo e o ciclo de vida estiver quase claro.\",\"Em suggestion, indique o mecanismo concreto da linguagem: finally, using/dispose, close, destroy, clearTimeout, clearInterval, rollback, release ou shutdown hook.\",\"Se houver ownership externo do recurso, nao exija fechamento local; mencione somente se o contrato de ownership estiver ambiguo.\",\"Use line_hint com 'linha N' quando a evidencia vier do codigo numerado ou null quando nao houver linha clara.\",\"Inclua positives quando houver cleanup em finally/using, transacao segura com rollback garantido no catch, listener removido, singleton adequado ou shutdown explicito.\",\"O summary deve dizer se o uso de recursos e seguro para a operacao do CPJ, tem risco localizado ou pode escalar para esgotamento ou bloqueio do banco.\"],\"examples\":[{\"title\":\"Conexao/Pool esgotado por loop de carteira\",\"input\":\"async function processarCarteira(dividas) { for (const divida of dividas) { const client = new db.Client(); await client.connect(); await client.query('...'); } }\",\"expected\":\"Reporte que um novo client de banco e instanciado e conectado dentro do loop para cada divida, sem ser fechado. Sugira usar um pool de conexoes injetado ou instanciar o client fora do loop e garantir o client.end() num bloco finally. Severity high devido ao risco imediato de connection limit exceeded.\"},{\"title\":\"Transacao financeira sem rollback em erro\",\"input\":\"await tx.begin(); await baixarParcela(id); await registrarHistorico(id); await tx.commit();\",\"expected\":\"Reporte ausencia de rollback se baixarParcela ou registrarHistorico falharem. Num sistema de cobranca, isso pode deixar a linha da parcela com lock indefinidamente no banco de dados. Sugira try/catch com tx.rollback() no catch/finally. Severity high.\"},{\"title\":\"Stream de arquivo de retorno aberto\",\"input\":\"const stream = fs.createReadStream(caminhoArquivoRetorno); return stream.pipe(parserBancario);\",\"expected\":\"Reporte risco se nao houver tratamento de error/close/aborted na stream. Sugira pipeline de promises do Node.js ou listeners que destruam a stream e liberem o arquivo em caso de erro no parser. Severity medium.\"},{\"title\":\"Timer acumulavel em integracao\",\"input\":\"function iniciarSincronizacaoBacen() { setInterval(sync, 5000); }\",\"expected\":\"Reporte se a funcao puder ser chamada mais de uma vez. Sugira guardar o handle e chamar clearInterval no stop/dispose, impedindo multiplas execucoes sobrepostas. Severity medium.\"},{\"title\":\"Falso positivo de vazamento em Singleton\",\"input\":\"const dbPool = new Pool(); export { dbPool };\",\"expected\":\"Nao reporte como vazamento. E um padrao de singleton de infraestrutura para reaproveitar conexoes. Cite como positivo se a inicializacao for limpa.\"}]},\"complexity\":{\"role\":\"Voce e um agente senior especialista em complexidade percebida, legibilidade e desenho de software para o sistema CPJ-Cobranca. Sua missao e encontrar complexidade estrutural, regras de negocio hardcoded e acoplamento que aumentam o risco de bugs em regras financeiras e dificultam a manutencao.\",\"instructions\":[\"Responda somente no schema estruturado solicitado: agent_name, findings, positives e summary.\",\"Analise aninhamento, condicionais, loops, duplicacao, tamanho de funcao, mistura de responsabilidades, acoplamento, flags booleanas, efeitos colaterais, ordem temporal fragil, valores magicos (magic numbers) e regras de negocio espalhadas.\",\"Reporte somente quando houver impacto concreto em entendimento, teste ou risco de caminho esquecido.\",\"Identifique a responsabilidade principal da unidade analisada e reporte fortemente quando ela misturar orquestracao (banco de dados, rede) com regras puras de dominio (ex: calculo de juros, politicas de desconto, classificacao de aging).\",\"Busque ativamente por Magic Numbers ou regras de dominio engessadas (hardcoded) no meio do fluxo, pois politicas de cobranca mudam com frequencia.\",\"Use severity high quando a complexidade puder ocultar bug de regra financeira, autorizacao, cobranca indevida, persistencia ou concorrencia.\",\"Use severity medium para magic numbers, regras hardcoded, ou quando o codigo exigir alto esforco para testar/alterar devido ao acoplamento entre regra de negocio e infraestrutura.\",\"Use severity low para refino de legibilidade local com baixo risco, e evite muitos lows.\",\"Em suggestion, proponha refatoracao concreta e incremental: extrair funcao pura, separar validacao de efeito colateral, mover configuracoes para variaveis/constantes, aplicar early return (guard clauses) ou usar tabelas de decisao.\",\"Use line_hint com 'linha N' quando a evidencia vier do codigo numerado ou null quando nao houver linha clara.\",\"Inclua positives quando o fluxo estiver linear, responsabilidades financeiras estiverem separadas da infraestrutura, regras estiverem bem nomeadas e parametrizadas.\",\"O summary deve dizer se a arquitetura interna da unidade suporta mudancas de regra de forma segura ou se esta engessada.\"],\"examples\":[{\"title\":\"Magic Numbers e Regras Hardcoded\",\"input\":\"if (prazo <= 30) desconto = 0.20; if (prazo <= 15) desconto = 0.30;\",\"expected\":\"Reporte o uso de magic numbers para definir regras de negocio financeiro. Sugira extrair os prazos e taxas para constantes nomeadas, um objeto de configuracao ou buscar de uma fonte externa de politicas, separando a regra de desconto da execucao da funcao. Severity medium ou high.\"},{\"title\":\"Mistura de responsabilidades (Calculo e Persistencia)\",\"input\":\"const valorOferta = divida.valor_total * (1 - desconto); await db.query(`UPDATE dividas SET ultima_oferta = ${valorOferta}...`); return valorOferta;\",\"expected\":\"Reporte o acoplamento entre o calculo da oferta (regra pura) e a atualizacao no banco de dados (efeito colateral). Sugira extrair o calculo para uma funcao independente pura para facilitar testes unitarios sem precisar de mock de banco de dados. Severity medium.\"},{\"title\":\"Aninhamento com efeito colateral escondido\",\"input\":\"if (acordo) { if (acordo.ativo) { for (const parcela of parcelas) { if (parcela.vencida) { await cobrar(parcela); } } } }\",\"expected\":\"Reporte aninhamento excessivo e mistura de selecao de parcelas com efeito colateral de cobranca. Sugira guard clauses e a extracao do filtro (ex: obterParcelasVencidas) separando da acao de cobranca. Severity medium.\"},{\"title\":\"Guard clause que melhora legibilidade\",\"input\":\"if (!devedor) return null; return devedor.historico;\",\"expected\":\"Nao reporte complexidade. A guard clause reduz aninhamento e deixa o fluxo de falha/ausencia claro no inicio da funcao. Cite como positivo.\"}]},\"security\":{\"role\":\"Voce e um agente senior especialista em seguranca de aplicacoes e privacidade de dados para o sistema CPJ-Cobranca. Sua missao e encontrar vulnerabilidades exploraveis, falhas de autorizacao ou exposicao indevida de dados financeiros e juridicos com evidencia no codigo, evitando alarmes falsos quando ha mitigacao clara.\",\"instructions\":[\"Responda somente no schema estruturado solicitado: agent_name, findings, positives e summary.\",\"Analise entrada externa, request, headers, cookies, query/body/path params, banco de dados, logs, autorizacao, autenticacao, SQL/NoSQL injection, SSRF e XSS.\",\"Trace a origem do dado antes de reportar: entrada externa sem validacao pesa mais que constante interna ou valor gerado pelo servidor.\",\"Nao reporte SQL injection quando houver ORM/query builder com binding claro ou parametros separados. Reporte IMEDIATAMENTE se houver concatenacao ou interpolacao de entrada (ex: ids, cpfs) em queries cruas, especialmente em tabelas de 'dividas', 'devedores' ou 'acordos'.\",\"Verifique rigorosamente se logs, erros e respostas expoem dados sensiveis do dominio financeiro/juridico (LGPD/BACEN), tais como 'devedor_id', 'valor_oferta', CPFs, CNPJs, ou historicos de negociacao em texto claro.\",\"Reporte validacao insuficiente como medium apenas quando o dado vem de boundary externo ou controla query, valor financeiro ou filtro multi-tenant. Se a origem nao estiver clara, trate como risco condicionado, low ou descarte.\",\"Use severity high para vulnerabilidade exploravel com impacto em dados, SQL injection real em operacoes de cobranca, ou exposicao de dados de devedores em logs que violem compliance.\",\"Use severity medium para validacao incompleta, logging sensivel limitado, configuracao insegura contextual ou risco dependente de pre-condicao plausivel.\",\"Use severity low para hardening ou defesa em profundidade sem explorabilidade clara, e evite muitos lows.\",\"Em suggestion, indique mitigacao concreta: prepared statements, binding do ORM, allowlist, sanitizacao especifica, mascaramento de log (ex: ocultar parte do CPF ou valor), checagem de autorizacao por carteira ou principio do menor privilegio.\",\"Se a evidencia nao for suficiente para afirmar vulnerabilidade, nao invente; no maximo reporte como risco condicionado e explique a condicao necessaria.\",\"Use line_hint com 'linha N' quando a evidencia vier do codigo numerado ou null quando nao houver linha clara.\",\"Inclua positives quando houver validacao por schema, binding seguro contra SQLi, mascaramento de dados em log, ou secrets fora do codigo.\",\"O summary deve dizer se ha vulnerabilidade concreta que afete os dados do CPJ, risco condicionado ou boas praticas de seguranca presentes.\"],\"examples\":[{\"title\":\"SQL injection real em tabela financeira\",\"input\":\"db.query(`SELECT * FROM dividas WHERE devedor_id = '${req.query.devedorId}'`);\",\"expected\":\"Reporte SQL injection porque a entrada externa devedorId e interpolada diretamente na query. Sugira db.query('SELECT * FROM dividas WHERE devedor_id = ?', [devedorId]) ou API equivalente de parametros preparados. Severity high devido ao risco de vazamento de toda a base de devedores.\"},{\"title\":\"Log de dados sensiveis (LGPD)\",\"input\":\"console.log('Calculando oferta para devedor: ' + devedorId + ' valor: ' + valorOferta);\",\"expected\":\"Reporte exposicao de dados sensiveis do dominio (identificador do devedor e valores financeiros) em texto claro no log. Sugira remover o log ou mascarar os dados antes de registar, para manter o compliance com normas de privacidade e LGPD. Severity high ou medium conforme o ambiente alvo.\"},{\"title\":\"ORM com binding seguro\",\"input\":\"db.devedor.findMany({ where: { cpf: request.query.cpf } });\",\"expected\":\"Nao reporte SQL injection se o ORM faz binding automatico do valor. Pode reportar a necessidade de validacao do formato e sanitizacao do CPF apenas se o contexto exigir e houver impacto claro no negocio.\"},{\"title\":\"Path traversal\",\"input\":\"return fs.readFileSync(diretorioRemessas + '/' + request.query.arquivo);\",\"expected\":\"Reporte path traversal porque o utilizador controla o caminho do ficheiro de remessa/retorno. Sugira allowlist de ficheiros, canonicalizacao e verificacao de que o resultado permanece dentro da pasta permitida. Severity high.\"}]}},\"aggregator\":{\"role\":\"Voce e o Tech Lead e agente agregador final de code review do sistema CPJ-Cobranca da Preambulo Tech. Sua missao e transformar achados de especialistas em uma resposta publica precisa, util e acionavel para os desenvolvedores, priorizando a seguranca, resiliencia financeira e clareza do dominio de recuperacao de credito.\",\"instructions\":[\"Responda OBRIGATORIAMENTE no schema estruturado solicitado, respeitando os enums exatos para evitar quebra de contrato na API.\",\"Em 'overall_quality' use APENAS as strings exatas: 'good', 'needs_improvement' ou 'critical'.\",\"Nas issues, em 'severity', use APENAS as strings exatas: 'low', 'medium' ou 'high'.\",\"Leia todos os achados dos especialistas, mas valide a evidencia e o impacto. Se um especialista reportar um falso positivo contradito pelo codigo, descarte-o.\",\"Consolide achados repetidos: se Security e ErrorHandling apontarem a mesma falha na execucao do banco de dados, crie apenas uma issue unificada com a causa raiz e a descricao mais completa.\",\"Priorize absolutamente vulnerabilidades criticas para o dominio do CPJ: SQL injection em tabelas financeiras, exposicao de dados de devedores (LGPD/BACEN) em logs, transacoes sem tratamento de erro e regras de cobranca hardcoded (magic numbers).\",\"Nao chame de pura uma funcao que faz log, consulta banco ou chama rede; descreva a necessidade de isolar o calculo da persistencia para facilitar os testes.\",\"Ajuste a severity pelo impacto real no negocio: high para risco de vazamento de dados, cobranca indevida ou falha silenciosa no banco; medium para regras hardcoded e alto acoplamento; low para pequenas melhorias de leitura.\",\"Defina overall_quality como 'critical' sempre que houver SQL injection, exposicao de LGPD ou falhas que comprometam a integridade do banco de dados.\",\"Defina overall_quality como 'needs_improvement' quando houver issues medium relevantes, como acoplamento e regras financeiras engessadas.\",\"Use score de 0 a 10: 9-10 sem issues relevantes; 7-8 bom com melhorias menores; 5-6 precisa melhorar por acoplamento/magic numbers; 0-4 risco serio de seguranca (ex: LGPD, SQLi) ou corrupcao de dados.\",\"O summary deve ser direto e focado no impacto para o produto CPJ-Cobranca, orientando claramente o desenvolvedor sobre o que deve ser corrigido prioritariamente antes de fazer o merge.\"],\"examples\":[{\"title\":\"Consolidacao de falha critica no CPJ (Priorizacao)\",\"input\":\"Security aponta SQL injection na query de dividas e log sensivel do devedor. ErrorHandling aponta falta de validacao no UPDATE financeiro. Complexity aponta magic numbers nos descontos.\",\"expected\":\"Gere issues separadas e acionaveis: uma HIGH para SQL Injection sugerindo prepared statements; uma HIGH para o log sensivel (LGPD) sugerindo mascaramento; uma HIGH/MEDIUM para a falta de validacao (affectedRows) no UPDATE; e uma MEDIUM alertando para extrair as taxas de desconto hardcoded. overall_quality obrigatoriamente 'critical' e o score baixo (ex: 2 ou 3) devido ao acumulo de riscos graves ao produto.\"},{\"title\":\"Descarte de falso positivo por contexto de dominio\",\"input\":\"NamingClarity sugere mudar variavel 'divida' para 'debt', afirmando que ingles e padrao. O codigo e claramente voltado a um dominio local brasileiro.\",\"expected\":\"Descarte a sugestao de idioma. O termo atual 'divida' e perfeitamente claro e coerente com a Ubiquitous Language do dominio do CPJ-Cobranca no Brasil.\"}]}};\nconst state = $json.request_state;\nconst input = state.input_payload;\nconst executionId = String($json.execution_id);\nconst requestHash = String($json.request_hash);\nconst languageProfiles = {\n  typescript: { graphNode: 'review_typescript', displayName: 'TypeScript', extensions: ['.ts', '.tsx'], namingGuidelines: ['nomes devem expressar intencao de dominio', 'tipos e interfaces precisam evitar abreviacoes opacas', 'funcoes async devem indicar efeito ou acao executada'], errorHandlingGuidelines: ['validacoes com Zod devem tratar safeParse sem pular tipos', 'erros devem ser propagados para o middleware global', 'promises precisam ser aguardadas ou retornadas'], resourceLeakGuidelines: ['clientes externos e conexoes precisam ter ciclo de vida claro', 'streams e handles precisam de cleanup em fluxos com falha'], securityGuidelines: ['evitar SQL com template literal interpolado', 'nao registrar tokens, cpf, senha ou dados pessoais em logs', 'evitar eval, Function dinamico e entrada externa sem validacao'] },\n  javascript: { graphNode: 'review_javascript', displayName: 'JavaScript', extensions: ['.js', '.jsx', '.mjs', '.cjs'], namingGuidelines: ['nomes devem compensar a ausencia de tipos estaticos', 'variaveis genericas como data, item e result precisam de contexto'], errorHandlingGuidelines: ['funcoes async devem tratar rejeicoes relevantes', 'callbacks precisam encaminhar erros para a camada chamadora'], resourceLeakGuidelines: ['timers, streams e listeners precisam ser encerrados quando aplicavel', 'clientes HTTP ou conexoes abertas precisam ter owner claro'], securityGuidelines: ['evitar eval, Function dinamico e command injection', 'evitar query SQL concatenada', 'nao registrar dados sensiveis em console ou logger'] },\n  python: { graphNode: 'review_python', displayName: 'Python', extensions: ['.py'], namingGuidelines: ['nomes devem seguir snake_case e revelar regra de negocio', 'classes devem expressar responsabilidade unica'], errorHandlingGuidelines: ['except amplo precisa justificar ou relancar erro', 'falhas de I/O devem ter tratamento explicito'], resourceLeakGuidelines: ['arquivos, cursores e conexoes devem usar context manager quando possivel', 'requests e sessoes precisam de timeout e fechamento quando aplicavel'], securityGuidelines: ['evitar eval, exec, pickle inseguro e subprocess com shell=True', 'evitar SQL formatado com f-string ou %', 'nao registrar segredos ou dados pessoais em logs'] },\n  php: { graphNode: 'review_php', displayName: 'PHP', extensions: ['.php'], namingGuidelines: ['nomes devem deixar claro se a funcao consulta, altera ou valida estado', 'variaveis vindas de request precisam ter nomes de origem claros'], errorHandlingGuidelines: ['operacoes de banco e arquivos devem tratar falhas sem esconder erro', 'exceptions devem ser propagadas para a camada de resposta'], resourceLeakGuidelines: ['handles de arquivo e conexoes precisam ser fechados quando aplicavel', 'recursos externos devem ter timeout e cleanup definidos'], securityGuidelines: ['evitar mysqli_query ou PDO com concatenacao de entrada externa', 'evitar include dinamico com dados de request', 'nao expor dados sensiveis com var_dump, print_r ou error_log'] },\n};\nconst profile = languageProfiles[input.language];\nif (!profile) throw new Error(`Linguagem nao suportada para review: ${input.language}.`);\nfunction toPromptContext(profile) { return [`Linguagem: ${profile.displayName}`, `Extensoes comuns: ${profile.extensions.join(', ')}`, `Nomenclatura: ${profile.namingGuidelines.join('; ')}`, `Erros: ${profile.errorHandlingGuidelines.join('; ')}`, `Recursos: ${profile.resourceLeakGuidelines.join('; ')}`, `Seguranca: ${profile.securityGuidelines.join('; ')}`].join('\\n'); }\nfunction formatInstructions(instructions) { return ['Instrucoes:', ...instructions.map((instruction) => `- ${instruction}`)].join('\\n'); }\nfunction formatExamples(examples) { return ['Exemplos:', ...examples.map((example) => [`${example.title}:`, `Entrada: ${example.input}`, `Resposta esperada: ${example.expected}`].join('\\n'))].join('\\n\\n'); }\nfunction createTemplate(entry) { const sections = [entry.role, '{{language_context}}', formatInstructions(entry.instructions)]; if (entry.examples?.length) sections.push(formatExamples(entry.examples)); return sections.join('\\n\\n'); }\nfunction withSpecialistSchema(prompt) { return `${prompt}\\n\\nContrato de saida estruturada: responda somente JSON valido com este formato exato: {\"agent_name\":\"string\",\"findings\":[{\"severity\":\"low|medium|high\",\"line_hint\":\"string|null\",\"description\":\"string\",\"suggestion\":\"string\"}],\"positives\":[\"string\"],\"summary\":\"string\"}.`; }\nfunction withAggregatorSchema(prompt) { return `${prompt}\\n\\nContrato de saida estruturada: responda somente JSON valido com este formato exato: {\"overall_quality\":\"good|needs_improvement|critical\",\"score\":0,\"issues\":[{\"severity\":\"low|medium|high\",\"line_hint\":\"string|null\",\"description\":\"string\",\"suggestion\":\"string\"}],\"positives\":[\"string\"],\"summary\":\"string\"}. O campo score deve ser inteiro de 0 a 10.`; }\nfunction findSensitiveLogs(code) { const findings = []; code.split('\\n').forEach((line, index) => { const lowerLine = line.toLowerCase(); const hasLog = lowerLine.includes('console.log') || lowerLine.includes('print_r') || lowerLine.includes('error_log'); const hasSensitiveData = lowerLine.includes('cpf') || lowerLine.includes('senha') || lowerLine.includes('password') || lowerLine.includes('token') || lowerLine.includes('secret'); if (hasLog && hasSensitiveData) findings.push({ severity: 'high', line_hint: `linha ${index + 1}`, description: 'Possivel dado sensivel sendo registrado em log.', suggestion: 'Remova dados sensiveis do log ou aplique mascaramento antes de registrar.' }); }); return findings; }\nfunction findObviousSqlInterpolation(code) { const findings = []; code.split('\\n').forEach((line, index) => { const lowerLine = line.toLowerCase(); const hasSqlKeyword = lowerLine.includes('select ') || lowerLine.includes('insert ') || lowerLine.includes('update ') || lowerLine.includes('delete '); const hasInterpolation = line.includes('${') || line.includes('$_GET') || line.includes('$_POST') || lowerLine.includes('format('); if (hasSqlKeyword && hasInterpolation) findings.push({ severity: 'high', line_hint: `linha ${index + 1}`, description: 'Possivel SQL injection por query montada com interpolacao ou entrada externa.', suggestion: 'Use parametros preparados e valide entradas antes de montar consultas.' }); }); return findings; }\nconst languageContext = toPromptContext(profile);\nconst deterministicFindings = [...findSensitiveLogs(input.code), ...findObviousSqlInterpolation(input.code)];\nconst specialistKeys = ['naming_clarity', 'error_handling', 'resource_leak', 'complexity', 'security'];\nconst systemPrompts = {};\nfor (const key of specialistKeys) systemPrompts[key] = withSpecialistSchema(createTemplate(promptData.specialists[key]).replace('{{language_context}}', languageContext));\nsystemPrompts.aggregator = withAggregatorSchema(createTemplate(promptData.aggregator).replace('{{language_context}}', languageContext));\nconst specialistUserPrompt = JSON.stringify({ linguagem: languageContext, contexto_usuario: input.context ?? null, codigo: input.code, achados_deterministicos: deterministicFindings, saidas_agentes_anteriores: [] }, null, 2);\nreturn [{ json: { execution_id: executionId, request_hash: requestHash, request_state: state, language: input.language, graph_node: profile.graphNode, language_context: languageContext, deterministic_findings: deterministicFindings, system_prompts: systemPrompts, specialist_user_prompt: specialistUserPrompt } }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000014",
+      "name": "Language Router + Deterministic Tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2110,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.specialist_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.system_prompts.naming_clarity }}"
+        }
+      },
+      "id": "11111111-1111-4111-8111-000000000015",
+      "name": "Naming Clarity Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2380,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.specialist_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.system_prompts.error_handling }}"
+        }
+      },
+      "id": "11111111-1111-4111-8111-000000000016",
+      "name": "Error Handling Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2380,
+        330
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.specialist_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.system_prompts.resource_leak }}"
+        }
+      },
+      "id": "11111111-1111-4111-8111-000000000017",
+      "name": "Resource Leak Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2380,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.specialist_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.system_prompts.complexity }}"
+        }
+      },
+      "id": "11111111-1111-4111-8111-000000000018",
+      "name": "Complexity Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2380,
+        670
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.specialist_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.system_prompts.security }}"
+        }
+      },
+      "id": "11111111-1111-4111-8111-000000000019",
+      "name": "Security Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2380,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $(\"Language Router + Deterministic Tools\").item.json.request_state.model }}",
+        "options": {
+          "temperature": 0.15,
+          "maxRetries": 2,
+          "timeout": 120000
+        }
+      },
+      "id": "11111111-1111-4111-8111-000000000020",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        2380,
+        1080
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 5,
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000021",
+      "name": "Merge Specialist Outputs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2700,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const routed = $('Language Router + Deterministic Tools').item.json;\nconst items = $input.all();\nconst fallbackNames = ['naming_clarity', 'error_handling', 'resource_leak', 'complexity', 'security'];\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction parseAgentOutput(value, fallbackName) { const raw = value?.output ?? value?.text ?? value?.response ?? value; if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) return normalizeSpecialist(raw, fallbackName); const text = cleanJsonText(raw); try { return normalizeSpecialist(JSON.parse(text), fallbackName); } catch { return { agent_name: fallbackName, findings: [{ severity: 'medium', line_hint: null, description: 'O agente especialista retornou conteudo fora do JSON estruturado esperado.', suggestion: 'Reexecute o review ou ajuste o prompt/schema do especialista.' }], positives: [], summary: text.slice(0, 500) || 'Saida invalida do agente especialista.' }; } }\nfunction normalizeSpecialist(value, fallbackName) { return { agent_name: String(value.agent_name ?? fallbackName), findings: Array.isArray(value.findings) ? value.findings.map(normalizeFinding).filter(Boolean) : [], positives: Array.isArray(value.positives) ? value.positives.map(String).filter(Boolean) : [], summary: String(value.summary ?? 'Analise concluida.') }; }\nfunction normalizeFinding(value) { if (!value || typeof value !== 'object') return null; const severity = ['low', 'medium', 'high'].includes(value.severity) ? value.severity : 'medium'; const description = String(value.description ?? '').trim(); const suggestion = String(value.suggestion ?? '').trim(); if (!description || !suggestion) return null; return { severity, line_hint: value.line_hint == null ? null : String(value.line_hint), description, suggestion }; }\nconst agentOutputs = items.map((item, index) => parseAgentOutput(item.json, fallbackNames[index] ?? `specialist_${index + 1}`));\nconst input = routed.request_state.input_payload;\nconst aggregatorUserPrompt = JSON.stringify({ contexto_usuario: input.context ?? null, codigo: input.code, achados_deterministicos: routed.deterministic_findings, saidas_especialistas: agentOutputs }, null, 2);\nreturn [{ json: { ...routed, agent_outputs: agentOutputs, aggregator_user_prompt: aggregatorUserPrompt, aggregator_system_prompt: routed.system_prompts.aggregator } }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000022",
+      "name": "Build Aggregator Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2960,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.aggregator_user_prompt }}",
+        "options": {
+          "systemMessage": "={{ $json.aggregator_system_prompt }}"
+        }
+      },
+      "id": "11111111-1111-4111-8111-000000000023",
+      "name": "Review Aggregator Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Build Aggregator Prompt').item.json;\nconst raw = $json.output ?? $json.text ?? $json.response ?? $json;\nfunction cleanJsonText(value) { return String(value ?? '').trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim(); }\nfunction parseReviewOutput(value) { if (typeof value === 'object' && value !== null && !Array.isArray(value)) return normalizeReview(value); const text = cleanJsonText(value); try { return normalizeReview(JSON.parse(text)); } catch { return { overall_quality: 'needs_improvement', score: 5, issues: [{ severity: 'medium', line_hint: null, description: 'O agente agregador retornou conteudo fora do JSON estruturado esperado.', suggestion: 'Reexecute o review ou ajuste o prompt/schema do agregador.' }], positives: [], summary: text.slice(0, 500) || 'Saida invalida do agente agregador.' }; } }\nfunction normalizeReview(value) { const overallQuality = ['good', 'needs_improvement', 'critical'].includes(value.overall_quality) ? value.overall_quality : 'needs_improvement'; const scoreNumber = Number(value.score); return { overall_quality: overallQuality, score: Number.isInteger(scoreNumber) ? Math.max(0, Math.min(10, scoreNumber)) : 5, issues: Array.isArray(value.issues) ? value.issues.map(normalizeFinding).filter(Boolean) : [], positives: Array.isArray(value.positives) ? value.positives.map(String).filter(Boolean) : [], summary: String(value.summary ?? 'Review concluido.') }; }\nfunction normalizeFinding(value) { if (!value || typeof value !== 'object') return null; const severity = ['low', 'medium', 'high'].includes(value.severity) ? value.severity : 'medium'; const description = String(value.description ?? '').trim(); const suggestion = String(value.suggestion ?? '').trim(); if (!description || !suggestion) return null; return { severity, line_hint: value.line_hint == null ? null : String(value.line_hint), description, suggestion }; }\nfunction sql(value) { return String(value).replaceAll(\"'\", \"''\"); }\nfunction estimateTokens(value) { return Math.ceil(String(value ?? '').length / 4); }\nconst response = parseReviewOutput(raw);\nconst executionId = context.execution_id;\nconst durationMs = Math.max(0, Date.now() - Number(context.request_state.started_at_ms ?? Date.now()));\nconst responseJson = JSON.stringify(response);\nconst promptText = [context.specialist_user_prompt, context.aggregator_user_prompt, ...Object.values(context.system_prompts)].join('\\n');\nconst completionText = JSON.stringify(context.agent_outputs) + '\\n' + JSON.stringify(response);\nconst promptTokens = estimateTokens(promptText);\nconst completionTokens = estimateTokens(completionText);\nconst totalTokens = promptTokens + completionTokens;\nconst inputCostUsd = Number(((promptTokens / 1000000) * 0.15).toFixed(8));\nconst outputCostUsd = Number(((completionTokens / 1000000) * 0.60).toFixed(8));\nconst costUsd = Number((inputCostUsd + outputCostUsd).toFixed(8));\nconst stepRows = [];\nfunction addStep(nodeName, kind, inputPayload, outputPayload) { stepRows.push(`('${sql(executionId)}'::uuid, '${sql(nodeName)}', '${sql(kind)}', 'success', '${sql(JSON.stringify(inputPayload ?? null))}'::jsonb, '${sql(JSON.stringify(outputPayload ?? null))}'::jsonb, 0)`); }\naddStep('language_router', 'system', { language: context.language }, { language: context.language, graphNode: context.graph_node });\naddStep('deterministic_tools', 'tool', { language: context.language, code: context.request_state.input_payload.code }, context.deterministic_findings);\nfor (const output of context.agent_outputs) addStep(`${output.agent_name}_agent`, 'llm', { language: context.language, deterministicFindings: context.deterministic_findings, agentOutputs: [] }, output);\naddStep('review_aggregator_agent', 'llm', { language: context.language, deterministicFindings: context.deterministic_findings, agentOutputs: context.agent_outputs }, response);\naddStep(context.graph_node, 'system', { language: context.language }, response);\nconst persistSuccessQuery = `WITH updated AS (\n  UPDATE executions\n  SET status = 'success', output_payload = '${sql(responseJson)}'::jsonb, duration_ms = ${durationMs}, error_message = NULL, updated_at = NOW()\n  WHERE id = '${sql(executionId)}'::uuid\n  RETURNING id\n), inserted_steps AS (\n  INSERT INTO execution_steps (execution_id, node_name, kind, status, input_payload, output_payload, duration_ms)\n  VALUES ${stepRows.join(',\\n         ')}\n  RETURNING execution_id\n)\nSELECT '${sql(responseJson)}'::jsonb AS response, '${sql(executionId)}' AS execution_id, ${durationMs}::integer AS duration_ms, ${promptTokens}::integer AS prompt_tokens, ${completionTokens}::integer AS completion_tokens, ${totalTokens}::integer AS total_tokens, ${costUsd}::numeric(12,8) AS cost_usd, ${inputCostUsd}::numeric(12,8) AS input_cost_usd, ${outputCostUsd}::numeric(12,8) AS output_cost_usd, '${sql(context.request_state.model)}' AS model_used;`;\nconst telemetryQuery = `INSERT INTO execution_telemetry (execution_id, provider, model_requested, model_used, prompt_tokens, completion_tokens, total_tokens, cost_usd, input_cost_usd, output_cost_usd, cache_read_tokens)\nVALUES ('${sql(executionId)}'::uuid, 'openrouter', '${sql(context.request_state.model)}', '${sql(context.request_state.model)}', ${promptTokens}, ${completionTokens}, ${totalTokens}, ${costUsd}, ${inputCostUsd}, ${outputCostUsd}, NULL)\nON CONFLICT (execution_id) DO UPDATE SET model_used = EXCLUDED.model_used, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, total_tokens = EXCLUDED.total_tokens, cost_usd = EXCLUDED.cost_usd, input_cost_usd = EXCLUDED.input_cost_usd, output_cost_usd = EXCLUDED.output_cost_usd, cache_read_tokens = EXCLUDED.cache_read_tokens\nRETURNING '${sql(responseJson)}'::jsonb AS response;`;\nreturn [{ json: { response, persist_success_query: persistSuccessQuery, telemetry_query: telemetryQuery } }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000024",
+      "name": "Normalize Aggregated Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3480,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.persist_success_query }}",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000025",
+      "name": "Persist Review Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3740,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.telemetry_query }}",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-000000000026",
+      "name": "Record Review Telemetry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4000,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "case-n8n Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json.response }];"
+      },
+      "id": "11111111-1111-4111-8111-000000000027",
       "name": "Respond Structured Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1600, 300]
+      "position": [
+        4260,
+        500
+      ]
     }
   ],
   "connections": {
     "POST /api/v1/review": {
-      "main": [[{ "node": "Validate Input + Route Specialist", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Prepare Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Validate Input + Route Specialist": {
-      "main": [[{ "node": "Specialist Review AI Agent", "type": "main", "index": 0 }]]
+    "Prepare Review Request": {
+      "main": [
+        [
+          {
+            "node": "Cache Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Lookup": {
+      "main": [
+        [
+          {
+            "node": "Use Cached Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Cached Review?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cache Hit Persistence",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cache Hit Persistence": {
+      "main": [
+        [
+          {
+            "node": "Create Cache Hit Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Cache Hit Execution": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cached Cache Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cached Cache Step": {
+      "main": [
+        [
+          {
+            "node": "Record Cached Cache Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Cached Cache Step": {
+      "main": [
+        [
+          {
+            "node": "Respond Cached Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Create Pending Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Pending Execution": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cache Lookup Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cache Lookup Step": {
+      "main": [
+        [
+          {
+            "node": "Record Cache Lookup Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Cache Lookup Step": {
+      "main": [
+        [
+          {
+            "node": "Language Router + Deterministic Tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Language Router + Deterministic Tools": {
+      "main": [
+        [
+          {
+            "node": "Naming Clarity Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Error Handling Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Resource Leak Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Complexity Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Security Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Naming Clarity Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge Specialist Outputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handling Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge Specialist Outputs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Resource Leak Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge Specialist Outputs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Complexity Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge Specialist Outputs",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Security Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge Specialist Outputs",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Merge Specialist Outputs": {
+      "main": [
+        [
+          {
+            "node": "Build Aggregator Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Aggregator Prompt": {
+      "main": [
+        [
+          {
+            "node": "Review Aggregator Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review Aggregator Agent": {
+      "main": [
+        [
+          {
+            "node": "Normalize Aggregated Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Aggregated Review": {
+      "main": [
+        [
+          {
+            "node": "Persist Review Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Review Success": {
+      "main": [
+        [
+          {
+            "node": "Record Review Telemetry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Review Telemetry": {
+      "main": [
+        [
+          {
+            "node": "Respond Structured Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "OpenRouter Chat Model": {
-      "ai_languageModel": [[{ "node": "Specialist Review AI Agent", "type": "ai_languageModel", "index": 0 }]]
-    },
-    "Specialist Review AI Agent": {
-      "main": [[{ "node": "Normalize Agent Output + Metrics", "type": "main", "index": 0 }]]
-    },
-    "Normalize Agent Output + Metrics": {
-      "main": [[{ "node": "Save Metrics to Postgres", "type": "main", "index": 0 }]]
-    },
-    "Save Metrics to Postgres": {
-      "main": [[{ "node": "Respond Structured Review", "type": "main", "index": 0 }]]
+      "ai_languageModel": [
+        [
+          {
+            "node": "Naming Clarity Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Error Handling Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Resource Leak Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Complexity Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Security Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Review Aggregator Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "staticData": null,
   "pinData": {},
   "tags": [],
   "triggerCount": 0,
-  "updatedAt": "2026-05-24T00:00:00.000Z",
-  "versionId": "6cc84a28-348d-4b34-a7d7-c8e2d0011008"
+  "updatedAt": "2026-06-01T00:00:00.000Z",
+  "versionId": "6cc84a28-348d-4b34-a7d7-faithfulreview"
 }
