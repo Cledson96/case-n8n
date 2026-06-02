@@ -1,12 +1,15 @@
 @baseUrl = https://n8n.preambulo.cledson.com.br
+@webhookBase = {{baseUrl}}/webhook
 @basicAuth = Basic REPLACE_WITH_BASE64_USER_COLON_PASSWORD
 
+# Authorization is only needed if /webhook/* is protected by proxy/gateway auth.
+
 ### Health
-GET {{baseUrl}}/health
+GET {{webhookBase}}/health
 Authorization: Basic {{basicAuth}}
 
 ### Review
-POST {{baseUrl}}/api/v1/review
+POST {{webhookBase}}/api/v1/review
 Content-Type: application/json
 Authorization: Basic {{basicAuth}}
 
@@ -17,7 +20,7 @@ Authorization: Basic {{basicAuth}}
 }
 
 ### Compliance
-POST {{baseUrl}}/api/v1/compliance
+POST {{webhookBase}}/api/v1/compliance
 Content-Type: application/json
 Authorization: Basic {{basicAuth}}
 
@@ -28,7 +31,7 @@ Authorization: Basic {{basicAuth}}
 }
 
 ### Document
-POST {{baseUrl}}/api/v1/document
+POST {{webhookBase}}/api/v1/document
 Content-Type: application/json
 Authorization: Basic {{basicAuth}}
 
@@ -39,7 +42,7 @@ Authorization: Basic {{basicAuth}}
 }
 
 ### Tests
-POST {{baseUrl}}/api/v1/tests
+POST {{webhookBase}}/api/v1/tests
 Content-Type: application/json
 Authorization: Basic {{basicAuth}}
 
@@ -50,9 +53,9 @@ Authorization: Basic {{basicAuth}}
 }
 
 ### History list
-GET {{baseUrl}}/api/v1/history
+GET {{webhookBase}}/api/v1/history
 Authorization: Basic {{basicAuth}}
 
 ### History detail
-GET {{baseUrl}}/api/v1/history/00000000-0000-0000-0000-000000000000
+GET {{webhookBase}}/api/v1/history/00000000-0000-0000-0000-000000000000
 Authorization: Basic {{basicAuth}}
